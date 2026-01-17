@@ -240,6 +240,7 @@ func (m *Manager) CreateExperiment(parentID, branchName, worktreePath string) (*
 		WorktreePath: worktreePath,
 		Branch:       branchName,
 		done:         make(chan struct{}),
+		tracker:      newStateTracker(),
 	}
 
 	m.sessions[id] = session
