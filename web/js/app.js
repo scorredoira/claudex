@@ -743,14 +743,14 @@ class Claudex {
             const modal = document.getElementById('modal');
 
             // Escape closes dialogs
-            if (e.key === 'Escape') {
+            if (e.key === 'Escape' && !e.shiftKey) {
                 if (!dialog.classList.contains('hidden')) {
                     dialog.classList.add('hidden');
                 }
             }
 
-            // Cmd+W (Mac) or Ctrl+W (Win/Linux) closes session modal
-            if (e.key === 'w' && (e.metaKey || e.ctrlKey)) {
+            // Shift+Escape closes session modal
+            if (e.key === 'Escape' && e.shiftKey) {
                 if (!modal.classList.contains('hidden')) {
                     e.preventDefault();
                     this.closeModal();
