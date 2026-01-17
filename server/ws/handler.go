@@ -186,6 +186,9 @@ func (h *Handler) handleInput(sessionID string, data json.RawMessage) {
 		return
 	}
 
+	// Track last input time
+	sess.SetLastInputAt(time.Now())
+
 	log.Printf("[WS] handleInput: writing %d bytes to session %s, raw input: %v", len(input), sessionID, []byte(input))
 	n, err := sess.Write([]byte(input))
 	if err != nil {

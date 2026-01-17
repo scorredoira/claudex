@@ -81,6 +81,7 @@ type Session struct {
 	Metadata     map[string]any    `json:"metadata,omitempty"`       // Extensible metadata
 	CreatedAt    time.Time         `json:"created_at"`
 	UpdatedAt    time.Time         `json:"updated_at"`
+	LastInputAt  time.Time         `json:"last_input_at,omitempty"`  // Last user input time
 	Directory    string            `json:"directory"`                // Working directory
 	ParentID     string            `json:"parent_id,omitempty"`      // Parent session ID (for experiments)
 	WorktreePath string            `json:"worktree_path,omitempty"`  // Git worktree path
@@ -132,6 +133,13 @@ func (s *Session) SetStatusChangeCallback(cb func(Status)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onStatusChange = cb
+}
+
+// SetLastInputAt updates the last input timestamp
+func (s *Session) SetLastInputAt(t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.LastInputAt = t
 }
 
 // Start launches Claude Code in this session

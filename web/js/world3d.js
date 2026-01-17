@@ -257,6 +257,7 @@ class World3D {
         if (session) {
             const label = this.createTileLabel(session.name || session.id);
             label.position.set(0, this.hexHeight + 0.15, this.hexSize * 0.5);
+            label.visible = false; // Hidden by default, show with Control key
             group.add(label);
             group.userData.label = label;
         }
@@ -774,6 +775,58 @@ class World3D {
         this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
         this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         window.addEventListener('resize', () => this.onResize());
+
+        // Control key shows/hides labels
+        this.labelsVisible = false;
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Control' && !this.labelsVisible) {
+                this.labelsVisible = true;
+                this.setLabelsVisible(true);
+            }
+            if (e.key === ' ' && this.isActive) {
+                e.preventDefault();
+                this.resetCameraView();
+            }
+        });
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'Control') {
+                this.labelsVisible = false;
+                this.setLabelsVisible(false);
+            }
+        });
+    }
+
+    setLabelsVisible(visible) {
+        this.parcels.forEach(parcel => {
+            const label = parcel.userData.label;
+            if (label) {
+                label.visible = visible;
+            }
+        });
+    }
+
+    resetCameraView() {
+        // Frontal, slightly elevated view
+        this.camera.position.set(0, 8, 12);
+        this.controls.target.set(0, 0, 0);
+        this.controls.update();
+        this.saveCameraPosition();
+    }
+
+    formatTimeAgo(dateStr) {
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffSecs = Math.floor(diffMs / 1000);
+        const diffMins = Math.floor(diffSecs / 60);
+        const diffHours = Math.floor(diffMins / 60);
+        const diffDays = Math.floor(diffHours / 24);
+
+        if (diffSecs < 60) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return date.toLocaleDateString();
     }
 
     onCanvasClick(event) {
@@ -899,7 +952,22 @@ class World3D {
 
             if (r && r.userData.session) {
                 const session = r.userData.session;
-                tooltip.textContent = session.name || session.id;
+                const statusLabels = {
+                    idle: 'Idle',
+                    thinking: 'Thinking',
+                    executing: 'Executing',
+                    waiting_input: 'Waiting',
+                    stopped: 'Stopped',
+                    shell: 'Shell'
+                };
+                const status = statusLabels[session.status] || session.status;
+                const lastActive = session.last_input_at || session.updated_at;
+                const timeAgo = lastActive ? this.formatTimeAgo(lastActive) : 'Never';
+
+                tooltip.innerHTML = `
+                    <strong>${session.name || session.id}</strong><br>
+                    <span style="opacity: 0.7">${status} · ${timeAgo}</span>
+                `;
                 tooltip.style.left = `${event.clientX + 15}px`;
                 tooltip.style.top = `${event.clientY + 15}px`;
                 tooltip.classList.remove('hidden');

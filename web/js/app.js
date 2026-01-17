@@ -887,7 +887,21 @@ class Claudex {
             dialog.classList.add('hidden');
             okBtn.onclick = null;
             cancelBtn.onclick = null;
+            document.removeEventListener('keydown', handleKey);
         };
+
+        const handleKey = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                cleanup();
+                onConfirm();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cleanup();
+            }
+        };
+
+        document.addEventListener('keydown', handleKey);
 
         okBtn.onclick = () => {
             cleanup();
