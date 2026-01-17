@@ -180,35 +180,26 @@ func (m *Manager) loadSessions() {
 		updatedAt, _ := time.Parse("2006-01-02T15:04:05Z07:00", info.UpdatedAt)
 		lastInputAt, _ := time.Parse("2006-01-02T15:04:05Z07:00", info.LastInputAt)
 
-		session := &Session{
-			ID:                  info.ID,
-			Name:                info.Name,
-			Status:              StatusIdle, // Reset to idle on load (including error states)
-			Color:               info.Color,
-			Position:            info.Position,
-			Metadata:            info.Metadata,
-			Directory:           info.Directory,
-			ParentID:            info.ParentID,
-			WorktreePath:        info.WorktreePath,
-			Branch:              info.Branch,
-			RobotModel:          info.RobotModel,
-			RobotColor:          info.RobotColor,
-			RobotAccessory:      info.RobotAccessory,
-			HexQ:                info.HexQ,
-			HexR:                info.HexR,
-			LastClaudeSessionID: info.LastClaudeSessionID,
-			CreatedAt:           createdAt,
-			UpdatedAt:           updatedAt,
-			LastInputAt:         lastInputAt,
-			done:                make(chan struct{}),
-			tracker:             newStateTracker(),
-		}
+		session := NewSession(info.ID, info.Name, info.Directory)
+		session.Status = StatusIdle // Reset to idle on load
+		session.Color = info.Color
+		session.Position = info.Position
+		session.Metadata = info.Metadata
+		session.ParentID = info.ParentID
+		session.WorktreePath = info.WorktreePath
+		session.Branch = info.Branch
+		session.RobotModel = info.RobotModel
+		session.RobotColor = info.RobotColor
+		session.RobotAccessory = info.RobotAccessory
+		session.HexQ = info.HexQ
+		session.HexR = info.HexR
+		session.LastClaudeSessionID = info.LastClaudeSessionID
+		session.CreatedAt = createdAt
+		session.UpdatedAt = updatedAt
+		session.LastInputAt = lastInputAt
 
-		// Load scrollback if exists
-		scrollbackPath := filepath.Join(m.storageDir, info.ID+".scrollback")
-		if scrollbackData, err := os.ReadFile(scrollbackPath); err == nil {
-			session.scrollback = scrollbackData
-		}
+		// Note: scrollback is now loaded on-demand when session is opened
+		// We don't preload it to keep memory usage low
 
 		m.sessions[session.ID] = session
 	}
@@ -250,21 +241,11 @@ func (m *Manager) CreateExperiment(parentID, branchName, worktreePath string) (*
 	id := uuid.New().String()[:8]
 	name := fmt.Sprintf("Exp: %s", branchName)
 
-	session := &Session{
-		ID:           id,
-		Name:         name,
-		Status:       StatusIdle,
-		Color:        parent.Color, // Same color as parent
-		Metadata:     make(map[string]any),
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-		Directory:    worktreePath,
-		ParentID:     parentID,
-		WorktreePath: worktreePath,
-		Branch:       branchName,
-		done:         make(chan struct{}),
-		tracker:      newStateTracker(),
-	}
+	session := NewSession(id, name, worktreePath)
+	session.Color = parent.Color // Same color as parent
+	session.ParentID = parentID
+	session.WorktreePath = worktreePath
+	session.Branch = branchName
 
 	m.sessions[id] = session
 	m.saveSession(session)

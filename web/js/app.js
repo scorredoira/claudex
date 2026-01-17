@@ -5,11 +5,16 @@ class Claudex {
         this.sessions = new Map();
         this.ws = null;
         this.activeSessionId = null;
-        this.modalTerminal = null;
         this.world3d = null;
         this.is3DView = false;
         this.clientState = null;
         this._saveStateTimeout = null;
+
+        // Multi-pane support
+        this.panes = new Map(); // paneId -> { terminal, fitAddon, element, paneId }
+        this.activePaneId = null;
+        this.splitInstance = null;
+        this.paneCounter = 0;
 
         this.init();
     }
@@ -94,19 +99,20 @@ class Claudex {
         }
         const decoded = new TextDecoder('utf-8').decode(bytes);
 
-        // Write to modal terminal if this session is active
-        if (this.activeSessionId === sessionId && this.modalTerminal) {
-            this.modalTerminal.write(decoded);
+        // Write to all panes of this session (they share the same PTY for now)
+        if (this.activeSessionId === sessionId) {
+            this.panes.forEach(pane => {
+                pane.terminal.write(decoded);
+            });
 
             // Scroll to bottom after scrollback is written
             if (this.scrollToBottomPending) {
                 this.scrollToBottomPending = false;
-                // Multiple attempts to ensure scroll works after large data loads
                 [50, 200, 500].forEach(delay => {
                     setTimeout(() => {
-                        if (this.modalTerminal) {
-                            this.modalTerminal.scrollToBottom();
-                        }
+                        this.panes.forEach(pane => {
+                            pane.terminal.scrollToBottom();
+                        });
                     }, delay);
                 });
             }
@@ -506,43 +512,93 @@ class Claudex {
         this.clientState.activeSession = sessionId;
         this.saveClientState();
 
-        // Update modal
+        // Update modal header
         const titleInput = document.getElementById('modal-title');
         titleInput.value = session.name || sessionId;
         titleInput.onchange = () => this.updateSessionName(sessionId, titleInput.value);
         titleInput.onkeydown = (e) => {
-            if (e.key === 'Enter') {
-                titleInput.blur();
-            }
-            e.stopPropagation(); // Don't send to terminal
+            if (e.key === 'Enter') titleInput.blur();
+            e.stopPropagation();
         };
         titleInput.onkeypress = (e) => e.stopPropagation();
         titleInput.onkeyup = (e) => e.stopPropagation();
-        titleInput.onblur = () => {
-            // Refocus terminal when title input loses focus
-            if (this.modalTerminal) {
-                this.modalTerminal.focus();
-            }
-        };
+        titleInput.onblur = () => this.focusActivePane();
 
         const modalBadge = document.getElementById('modal-status');
         modalBadge.textContent = (session.status || 'idle').replace('_', ' ');
         modalBadge.className = `status-badge ${session.status || 'idle'}`;
 
-        // Show restart button if session is stopped
         const restartBtn = document.getElementById('modal-restart');
-        if (session.status === 'stopped') {
-            restartBtn.classList.remove('hidden');
-        } else {
-            restartBtn.classList.add('hidden');
+        restartBtn.classList.toggle('hidden', session.status !== 'stopped');
+
+        // Clear panes
+        this.panes.clear();
+        this.activePaneId = null;
+        this.paneCounter = 0;
+        if (this.splitInstance) {
+            this.splitInstance.destroy();
+            this.splitInstance = null;
         }
 
-        // Create/show modal terminal
-        const container = document.getElementById('modal-terminal');
-        container.innerHTML = '';
+        // Setup panes container
+        const panesContainer = document.getElementById('modal-panes');
+        panesContainer.innerHTML = '';
+        panesContainer.className = '';
 
+        // Show modal FIRST so container has dimensions
+        document.getElementById('modal').classList.remove('hidden');
+
+        // Create first pane
+        this.createPane(sessionId);
+
+        // Subscribe to session
+        this.ws.send(JSON.stringify({
+            type: 'subscribe',
+            session_id: sessionId
+        }));
+
+        // Start session if needed
+        const firstPane = this.panes.values().next().value;
+        if ((session.status === 'idle' || !session.status) && firstPane) {
+            this.ws.send(JSON.stringify({
+                type: 'start',
+                session_id: sessionId,
+                data: { rows: firstPane.terminal.rows, cols: firstPane.terminal.cols }
+            }));
+        }
+
+        this.scrollToBottomPending = true;
+    }
+
+    createPane(sessionId) {
+        const paneId = `pane-${++this.paneCounter}`;
+        const panesContainer = document.getElementById('modal-panes');
+
+        // Create pane element
+        const paneEl = document.createElement('div');
+        paneEl.className = 'pane';
+        paneEl.dataset.paneId = paneId;
+
+        // Close button
+        const header = document.createElement('div');
+        header.className = 'pane-header';
+        header.innerHTML = `<button class="pane-close" title="Close pane">&times;</button>`;
+        header.querySelector('.pane-close').onclick = (e) => {
+            e.stopPropagation();
+            this.closePane(paneId);
+        };
+        paneEl.appendChild(header);
+
+        // Terminal container
+        const termContainer = document.createElement('div');
+        termContainer.className = 'terminal-container';
+        paneEl.appendChild(termContainer);
+
+        panesContainer.appendChild(paneEl);
+
+        // Create terminal
         const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-        this.modalTerminal = new Terminal({
+        const terminal = new Terminal({
             fontSize: 14,
             theme: this.getTerminalTheme(isDark),
             cursorBlink: true,
@@ -551,38 +607,27 @@ class Claudex {
         });
 
         const fitAddon = new FitAddon.FitAddon();
-        const webLinksAddon = new WebLinksAddon.WebLinksAddon();
+        terminal.loadAddon(fitAddon);
+        terminal.loadAddon(new WebLinksAddon.WebLinksAddon());
         const unicode11Addon = new Unicode11Addon.Unicode11Addon();
+        terminal.loadAddon(unicode11Addon);
+        terminal.unicode.activeVersion = '11';
 
-        this.modalTerminal.loadAddon(fitAddon);
-        this.modalTerminal.loadAddon(webLinksAddon);
-        this.modalTerminal.loadAddon(unicode11Addon);
-        this.modalTerminal.unicode.activeVersion = '11';
-
-        // Show modal FIRST so container has dimensions
-        document.getElementById('modal').classList.remove('hidden');
-
-        // Now open and fit terminal
-        this.modalTerminal.open(container);
+        terminal.open(termContainer);
         fitAddon.fit();
 
-        // Send initial size to server
-        this.sendResize(sessionId, this.modalTerminal.rows, this.modalTerminal.cols);
-
-        // Handle input
-        this.modalTerminal.onData(data => {
+        // Input handling
+        terminal.onData(data => {
             this.sendInput(sessionId, data);
         });
 
-        // Custom key handlers for terminal
-        this.modalTerminal.attachCustomKeyEventHandler((event) => {
+        // Custom key handlers
+        terminal.attachCustomKeyEventHandler((event) => {
             if (event.type === 'keydown') {
-                // Shift+Enter: multiline input for Claude Code
                 if (event.key === 'Enter' && event.shiftKey) {
                     this.sendInput(sessionId, '\x1b[13;2u');
                     return false;
                 }
-                // Shift+Escape: close session modal
                 if (event.key === 'Escape' && event.shiftKey) {
                     this.closeModal();
                     return false;
@@ -591,44 +636,136 @@ class Claudex {
             return true;
         });
 
-        // Click on terminal container refocuses terminal
-        container.onclick = () => {
-            if (this.modalTerminal) {
-                this.modalTerminal.focus();
-            }
-        };
+        // Focus handling
+        paneEl.onclick = () => this.setActivePane(paneId);
 
-        // Handle resize with debounce
-        let resizeTimeout;
-        this.resizeObserver = new ResizeObserver(() => {
-            if (this.modalTerminal) {
-                clearTimeout(resizeTimeout);
-                resizeTimeout = setTimeout(() => {
-                    fitAddon.fit();
-                    this.sendResize(sessionId, this.modalTerminal.rows, this.modalTerminal.cols);
-                }, 100);
-            }
-        });
-        this.resizeObserver.observe(container);
+        // Store pane
+        const pane = { paneId, terminal, fitAddon, element: paneEl };
+        this.panes.set(paneId, pane);
 
-        // Subscribe to session output and start if not running
-        this.ws.send(JSON.stringify({
-            type: 'subscribe',
-            session_id: sessionId
-        }));
-
-        if (session.status === 'idle' || !session.status) {
-            this.ws.send(JSON.stringify({
-                type: 'start',
-                session_id: sessionId,
-                data: { rows: this.modalTerminal.rows, cols: this.modalTerminal.cols }
-            }));
+        // Set as active if first pane
+        if (this.panes.size === 1) {
+            this.setActivePane(paneId);
         }
 
-        this.modalTerminal.focus();
+        // Setup resize observer
+        this.setupPaneResizeObserver(pane, sessionId);
 
-        // Scroll to bottom after scrollback is loaded
-        this.scrollToBottomPending = true;
+        return pane;
+    }
+
+    setupPaneResizeObserver(pane, sessionId) {
+        let resizeTimeout;
+        const observer = new ResizeObserver(() => {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                pane.fitAddon.fit();
+                this.sendResize(sessionId, pane.terminal.rows, pane.terminal.cols);
+            }, 100);
+        });
+        observer.observe(pane.element);
+        pane.resizeObserver = observer;
+    }
+
+    setActivePane(paneId) {
+        // Remove active class from all panes
+        this.panes.forEach(p => p.element.classList.remove('active'));
+
+        // Set new active pane
+        const pane = this.panes.get(paneId);
+        if (pane) {
+            pane.element.classList.add('active');
+            this.activePaneId = paneId;
+            pane.terminal.focus();
+        }
+    }
+
+    focusActivePane() {
+        if (this.activePaneId) {
+            const pane = this.panes.get(this.activePaneId);
+            if (pane) pane.terminal.focus();
+        }
+    }
+
+    closePane(paneId) {
+        const pane = this.panes.get(paneId);
+        if (!pane) return;
+
+        // Cleanup
+        if (pane.resizeObserver) pane.resizeObserver.disconnect();
+        pane.terminal.dispose();
+        pane.element.remove();
+        this.panes.delete(paneId);
+
+        // If no panes left, close modal
+        if (this.panes.size === 0) {
+            this.closeModal();
+            return;
+        }
+
+        // Rebuild split if needed
+        this.rebuildSplit();
+
+        // Set new active pane
+        if (this.activePaneId === paneId) {
+            const firstPane = this.panes.values().next().value;
+            if (firstPane) this.setActivePane(firstPane.paneId);
+        }
+    }
+
+    splitPane(direction) {
+        if (!this.activeSessionId) return;
+
+        const sessionId = this.activeSessionId;
+        const panesContainer = document.getElementById('modal-panes');
+
+        // Create new pane
+        const newPane = this.createPane(sessionId);
+
+        // Rebuild split layout
+        this.rebuildSplit(direction);
+
+        // Focus new pane
+        this.setActivePane(newPane.paneId);
+    }
+
+    rebuildSplit(direction) {
+        const panesContainer = document.getElementById('modal-panes');
+
+        // Destroy existing split
+        if (this.splitInstance) {
+            this.splitInstance.destroy();
+            this.splitInstance = null;
+        }
+
+        if (this.panes.size <= 1) {
+            panesContainer.className = '';
+            return;
+        }
+
+        // Determine direction (use provided or default to horizontal)
+        const splitDir = direction || 'horizontal';
+        panesContainer.className = splitDir;
+
+        // Get pane elements
+        const paneEls = Array.from(this.panes.values()).map(p => p.element);
+
+        // Create split
+        this.splitInstance = Split(paneEls, {
+            direction: splitDir,
+            sizes: paneEls.map(() => 100 / paneEls.length),
+            minSize: 100,
+            gutterSize: 4,
+            onDragEnd: () => {
+                // Refit all terminals after resize
+                this.panes.forEach(pane => {
+                    pane.fitAddon.fit();
+                    if (this.activeSessionId) {
+                        this.sendResize(this.activeSessionId, pane.terminal.rows, pane.terminal.cols);
+                    }
+                });
+            }
+        });
     }
 
     closeModal() {
@@ -639,13 +776,21 @@ class Claudex {
             }));
         }
 
-        if (this.resizeObserver) {
-            this.resizeObserver.disconnect();
-            this.resizeObserver = null;
+        // Cleanup all panes
+        this.panes.forEach(pane => {
+            if (pane.resizeObserver) pane.resizeObserver.disconnect();
+            pane.terminal.dispose();
+        });
+        this.panes.clear();
+        this.activePaneId = null;
+
+        // Cleanup split
+        if (this.splitInstance) {
+            this.splitInstance.destroy();
+            this.splitInstance = null;
         }
 
         this.activeSessionId = null;
-        this.modalTerminal = null;
         document.getElementById('modal').classList.add('hidden');
     }
 
@@ -741,6 +886,10 @@ class Claudex {
         // Restart session
         document.getElementById('modal-restart').onclick = () => this.restartSession();
 
+        // Split panes
+        document.getElementById('modal-split-h').onclick = () => this.splitPane('horizontal');
+        document.getElementById('modal-split-v').onclick = () => this.splitPane('vertical');
+
         // Experiment from modal
         document.getElementById('modal-experiment').onclick = () => {
             if (this.activeSessionId) {
@@ -807,10 +956,10 @@ class Claudex {
             document.querySelector('.theme-label').textContent = 'Dark';
         }
 
-        // Update modal terminal theme
-        if (this.modalTerminal) {
-            this.modalTerminal.options.theme = this.getTerminalTheme(isDark);
-        }
+        // Update all pane terminals theme
+        this.panes.forEach(pane => {
+            pane.terminal.options.theme = this.getTerminalTheme(isDark);
+        });
     }
 
     // 3D View methods

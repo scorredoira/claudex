@@ -379,20 +379,37 @@ header h1 {
     gap: 1rem;
 }
 
-#modal-terminal {
+/* Multi-pane container */
+#modal-panes {
     flex: 1;
     min-height: 0;
-    padding: 0;
-    background: var(--bg-card);
+    display: flex;
     overflow: hidden;
     position: relative;
 }
 
-[data-theme="dark"] #modal-terminal {
+#modal-panes.horizontal {
+    flex-direction: row;
+}
+
+#modal-panes.vertical {
+    flex-direction: column;
+}
+
+.pane {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    background: var(--bg-card);
+    overflow: hidden;
+}
+
+[data-theme="dark"] .pane {
     background: #1a1a1a;
 }
 
-#modal-terminal .xterm {
+.pane .terminal-container {
     position: absolute;
     top: 0;
     left: 0;
@@ -401,12 +418,76 @@ header h1 {
     padding: 0.5rem;
 }
 
-#modal-terminal .xterm-viewport {
+.pane .xterm {
+    width: 100%;
+    height: 100%;
+}
+
+.pane .xterm-viewport {
     width: 100% !important;
 }
 
-#modal-terminal .xterm-screen {
+.pane .xterm-screen {
     width: 100% !important;
+}
+
+.pane.active {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+/* Pane header with close button */
+.pane-header {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.pane:hover .pane-header {
+    opacity: 1;
+}
+
+.pane-close {
+    background: rgba(0,0,0,0.5);
+    border: none;
+    color: #fff;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.pane-close:hover {
+    background: rgba(239, 68, 68, 0.8);
+}
+
+/* Split.js gutter styles */
+.gutter {
+    background-color: var(--border-color);
+    background-repeat: no-repeat;
+    background-position: 50%;
+}
+
+.gutter.gutter-horizontal {
+    cursor: col-resize;
+    width: 4px;
+}
+
+.gutter.gutter-vertical {
+    cursor: row-resize;
+    height: 4px;
+}
+
+.gutter:hover {
+    background-color: var(--accent);
 }
 
 /* New Session Dialog */
