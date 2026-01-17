@@ -1,6 +1,13 @@
-# Claudex
+<p align="center">
+  <img src="docs/images/claudex-icon.svg" width="80" height="80" alt="Claudex">
+</p>
 
-A multi-session manager for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with an interactive 3D visualization. Run and monitor multiple Claude Code instances from a single web interface.
+<h1 align="center">Claudex</h1>
+
+<p align="center">
+  A multi-session manager for <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a> with an interactive 3D visualization.<br>
+  Run and monitor multiple Claude Code instances from a single web interface.
+</p>
 
 ![Claudex 3D World](docs/images/world-3d.png)
 
