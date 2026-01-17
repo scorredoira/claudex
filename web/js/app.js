@@ -574,14 +574,21 @@ class Claudex {
             this.sendInput(sessionId, data);
         });
 
-        // Shift+Enter sends CSI u sequence (for Claude Code multiline input)
+        // Custom key handlers for terminal
         this.modalTerminal.attachCustomKeyEventHandler((event) => {
-            if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey) {
-                // Send CSI u encoding: ESC [ 13 ; 2 u (Enter with Shift modifier)
-                this.sendInput(sessionId, '\x1b[13;2u');
-                return false; // Prevent default handling
+            if (event.type === 'keydown') {
+                // Shift+Enter: multiline input for Claude Code
+                if (event.key === 'Enter' && event.shiftKey) {
+                    this.sendInput(sessionId, '\x1b[13;2u');
+                    return false;
+                }
+                // Shift+Escape: close session modal
+                if (event.key === 'Escape' && event.shiftKey) {
+                    this.closeModal();
+                    return false;
+                }
             }
-            return true; // Let other keys pass through
+            return true;
         });
 
         // Click on terminal container refocuses terminal
