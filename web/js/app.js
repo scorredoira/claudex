@@ -574,6 +574,16 @@ class Claudex {
             this.sendInput(sessionId, data);
         });
 
+        // Shift+Enter sends CSI u sequence (for Claude Code multiline input)
+        this.modalTerminal.attachCustomKeyEventHandler((event) => {
+            if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey) {
+                // Send CSI u encoding: ESC [ 13 ; 2 u (Enter with Shift modifier)
+                this.sendInput(sessionId, '\x1b[13;2u');
+                return false; // Prevent default handling
+            }
+            return true; // Let other keys pass through
+        });
+
         // Click on terminal container refocuses terminal
         container.onclick = () => {
             if (this.modalTerminal) {
@@ -816,6 +826,22 @@ class Claudex {
         this.world3d.getEmptyIslands = () => {
             return this.clientState?.emptyIslands || [];
         };
+
+        // Claude state callback
+        this.world3d.fetchClaudeState = async (sessionId) => {
+            try {
+                const response = await fetch(`/api/sessions/${sessionId}/claude-state`);
+                if (response.ok) {
+                    return await response.json();
+                }
+            } catch (err) {
+                console.error('Failed to fetch Claude state:', err);
+            }
+            return null;
+        };
+
+        // Restore camera position now that callbacks are set
+        this.world3d.restoreCameraPosition();
 
         // Sync current sessions
         this.world3d.updateSessions(this.sessions);

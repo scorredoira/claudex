@@ -33,11 +33,12 @@ type SessionInfo struct {
 	ParentID     string            `json:"parent_id,omitempty"`
 	WorktreePath   string            `json:"worktree_path,omitempty"`
 	Branch         string            `json:"branch,omitempty"`
-	RobotModel     string            `json:"robot_model,omitempty"`
-	RobotColor     string            `json:"robot_color,omitempty"`
-	RobotAccessory string            `json:"robot_accessory,omitempty"`
-	HexQ           *int              `json:"hex_q,omitempty"`
-	HexR           *int              `json:"hex_r,omitempty"`
+	RobotModel          string            `json:"robot_model,omitempty"`
+	RobotColor          string            `json:"robot_color,omitempty"`
+	RobotAccessory      string            `json:"robot_accessory,omitempty"`
+	HexQ                *int              `json:"hex_q,omitempty"`
+	HexR                *int              `json:"hex_r,omitempty"`
+	LastClaudeSessionID string            `json:"last_claude_session_id,omitempty"`
 }
 
 // NewManager creates a new session manager
@@ -134,11 +135,12 @@ func (m *Manager) saveSession(s *Session) error {
 		ParentID:       s.ParentID,
 		WorktreePath:   s.WorktreePath,
 		Branch:         s.Branch,
-		RobotModel:     s.RobotModel,
-		RobotColor:     s.RobotColor,
-		RobotAccessory: s.RobotAccessory,
-		HexQ:           s.HexQ,
-		HexR:           s.HexR,
+		RobotModel:          s.RobotModel,
+		RobotColor:          s.RobotColor,
+		RobotAccessory:      s.RobotAccessory,
+		HexQ:                s.HexQ,
+		HexR:                s.HexR,
+		LastClaudeSessionID: s.LastClaudeSessionID,
 	}
 
 	data, err := json.MarshalIndent(info, "", "  ")
@@ -179,26 +181,27 @@ func (m *Manager) loadSessions() {
 		lastInputAt, _ := time.Parse("2006-01-02T15:04:05Z07:00", info.LastInputAt)
 
 		session := &Session{
-			ID:             info.ID,
-			Name:           info.Name,
-			Status:         StatusIdle, // Reset to idle on load (including error states)
-			Color:          info.Color,
-			Position:       info.Position,
-			Metadata:       info.Metadata,
-			Directory:      info.Directory,
-			ParentID:       info.ParentID,
-			WorktreePath:   info.WorktreePath,
-			Branch:         info.Branch,
-			RobotModel:     info.RobotModel,
-			RobotColor:     info.RobotColor,
-			RobotAccessory: info.RobotAccessory,
-			HexQ:           info.HexQ,
-			HexR:           info.HexR,
-			CreatedAt:      createdAt,
-			UpdatedAt:      updatedAt,
-			LastInputAt:    lastInputAt,
-			done:           make(chan struct{}),
-			tracker:        newStateTracker(),
+			ID:                  info.ID,
+			Name:                info.Name,
+			Status:              StatusIdle, // Reset to idle on load (including error states)
+			Color:               info.Color,
+			Position:            info.Position,
+			Metadata:            info.Metadata,
+			Directory:           info.Directory,
+			ParentID:            info.ParentID,
+			WorktreePath:        info.WorktreePath,
+			Branch:              info.Branch,
+			RobotModel:          info.RobotModel,
+			RobotColor:          info.RobotColor,
+			RobotAccessory:      info.RobotAccessory,
+			HexQ:                info.HexQ,
+			HexR:                info.HexR,
+			LastClaudeSessionID: info.LastClaudeSessionID,
+			CreatedAt:           createdAt,
+			UpdatedAt:           updatedAt,
+			LastInputAt:         lastInputAt,
+			done:                make(chan struct{}),
+			tracker:             newStateTracker(),
 		}
 
 		// Load scrollback if exists

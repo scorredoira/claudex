@@ -19,6 +19,10 @@ class World3D {
         this.onSaveEmptyIslands = null;
         this.getEmptyIslands = null;
 
+        // Claude state callback (set by app.js)
+        this.fetchClaudeState = null;
+        this.claudeStateCache = new Map(); // sessionId -> { data, timestamp }
+
         // Hex grid settings
         this.hexSize = 1.2;
         this.hexHeight = 0.3;
@@ -1348,25 +1352,7 @@ class World3D {
 
             if (r && r.userData.session) {
                 const session = r.userData.session;
-                const statusLabels = {
-                    idle: 'Idle',
-                    thinking: 'Thinking',
-                    executing: 'Executing',
-                    waiting_input: 'Waiting',
-                    stopped: 'Stopped',
-                    shell: 'Shell'
-                };
-                const status = statusLabels[session.status] || session.status;
-                const lastActive = session.last_input_at || session.updated_at;
-                const timeAgo = lastActive ? this.formatTimeAgo(lastActive) : 'Never';
-
-                tooltip.innerHTML = `
-                    <strong>${session.name || session.id}</strong><br>
-                    <span style="opacity: 0.7">${status} · ${timeAgo}</span>
-                `;
-                tooltip.style.left = `${event.clientX + 15}px`;
-                tooltip.style.top = `${event.clientY + 15}px`;
-                tooltip.classList.remove('hidden');
+                this.showSessionTooltip(session, tooltip, event.clientX, event.clientY);
                 return;
             }
         }
@@ -1374,6 +1360,99 @@ class World3D {
         if (tooltip) {
             tooltip.classList.add('hidden');
         }
+    }
+
+    async showSessionTooltip(session, tooltip, x, y) {
+        const statusLabels = {
+            idle: 'Idle',
+            thinking: 'Thinking',
+            executing: 'Executing',
+            waiting_input: 'Waiting',
+            stopped: 'Stopped',
+            shell: 'Shell'
+        };
+        const status = statusLabels[session.status] || session.status;
+        const lastActive = session.last_input_at || session.updated_at;
+        const timeAgo = lastActive ? this.formatTimeAgo(lastActive) : 'Never';
+
+        // Basic tooltip first
+        let html = `
+            <strong>${session.name || session.id}</strong><br>
+            <span style="opacity: 0.7">${status} · ${timeAgo}</span>
+        `;
+
+        // Check Claude state cache
+        const cacheKey = session.id;
+        const cached = this.claudeStateCache.get(cacheKey);
+        const now = Date.now();
+
+        // Use cache if less than 5 seconds old
+        if (cached && (now - cached.timestamp) < 5000) {
+            html = this.buildClaudeTooltip(session, cached.data, status, timeAgo);
+        } else if (this.fetchClaudeState) {
+            // Fetch in background
+            this.fetchClaudeState(session.id).then(claudeState => {
+                if (claudeState) {
+                    this.claudeStateCache.set(cacheKey, { data: claudeState, timestamp: Date.now() });
+                    // Update tooltip if still visible and same session
+                    if (!tooltip.classList.contains('hidden')) {
+                        tooltip.innerHTML = this.buildClaudeTooltip(session, claudeState, status, timeAgo);
+                    }
+                }
+            }).catch(() => {});
+        }
+
+        tooltip.innerHTML = html;
+        tooltip.style.left = `${x + 15}px`;
+        tooltip.style.top = `${y + 15}px`;
+        tooltip.classList.remove('hidden');
+    }
+
+    buildClaudeTooltip(session, claudeState, status, timeAgo) {
+        let html = `<strong>${session.name || session.id}</strong><br>`;
+
+        // Use Claude state status if available and more specific
+        if (claudeState.status && claudeState.status !== 'idle') {
+            const claudeStatusLabels = {
+                thinking: '🤔 Thinking',
+                executing: '⚡ Executing',
+                waiting_input: '⏳ Waiting for input',
+                idle: 'Idle'
+            };
+            html += `<span style="opacity: 0.9">${claudeStatusLabels[claudeState.status] || claudeState.status}</span><br>`;
+
+            // Show current tool if executing
+            if (claudeState.status === 'executing' && claudeState.currentTool) {
+                html += `<span style="opacity: 0.7; font-size: 0.9em">`;
+                html += `📦 ${claudeState.currentTool}`;
+                if (claudeState.toolTarget) {
+                    html += `: <code>${claudeState.toolTarget}</code>`;
+                }
+                html += `</span><br>`;
+            }
+        } else {
+            html += `<span style="opacity: 0.7">${status} · ${timeAgo}</span><br>`;
+        }
+
+        // Directory
+        if (claudeState.cwd) {
+            const shortPath = claudeState.cwd.split('/').slice(-2).join('/');
+            html += `<span style="opacity: 0.6; font-size: 0.85em">📁 ${shortPath}</span><br>`;
+        }
+
+        // Model
+        if (claudeState.model) {
+            const shortModel = claudeState.model.replace('claude-', '').replace('-20251101', '');
+            html += `<span style="opacity: 0.6; font-size: 0.85em">🤖 ${shortModel}</span><br>`;
+        }
+
+        // Tokens
+        if (claudeState.tokensUsed > 0) {
+            const tokensK = (claudeState.tokensUsed / 1000).toFixed(1);
+            html += `<span style="opacity: 0.6; font-size: 0.85em">📊 ${tokensK}k tokens</span>`;
+        }
+
+        return html;
     }
 
     onResize() {
@@ -1683,16 +1762,12 @@ class World3D {
 
     saveCameraPosition() {
         const data = {
-            position: {
-                x: this.camera.position.x,
-                y: this.camera.position.y,
-                z: this.camera.position.z
-            },
-            target: {
-                x: this.controls.target.x,
-                y: this.controls.target.y,
-                z: this.controls.target.z
-            }
+            x: this.camera.position.x,
+            y: this.camera.position.y,
+            z: this.camera.position.z,
+            targetX: this.controls.target.x,
+            targetY: this.controls.target.y,
+            targetZ: this.controls.target.z
         };
         if (this.onSaveCamera) {
             this.onSaveCamera(data);
@@ -1701,9 +1776,10 @@ class World3D {
 
     restoreCameraPosition() {
         const data = this.getInitialCamera ? this.getInitialCamera() : null;
-        if (data && data.position && data.target) {
-            this.camera.position.set(data.position.x, data.position.y, data.position.z);
-            this.controls.target.set(data.target.x, data.target.y, data.target.z);
+        if (data && data.x !== undefined) {
+            this.camera.position.set(data.x, data.y, data.z);
+            this.controls.target.set(data.targetX, data.targetY, data.targetZ);
+            this.controls.update();
         }
     }
 }

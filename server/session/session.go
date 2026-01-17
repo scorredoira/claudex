@@ -98,6 +98,9 @@ type Session struct {
 	HexQ *int `json:"hex_q,omitempty"` // Hex coordinate Q
 	HexR *int `json:"hex_r,omitempty"` // Hex coordinate R
 
+	// Claude Code session tracking
+	LastClaudeSessionID string `json:"last_claude_session_id,omitempty"` // Last Claude Code session ID for auto-resume
+
 	// Internal fields (not serialized)
 	cmd        *exec.Cmd
 	pty        *os.File
@@ -206,30 +209,44 @@ func (s *Session) Start(rows, cols uint16, onOutput func([]byte)) error {
 }
 
 // Resume resumes a previous Claude Code session
-func (s *Session) Resume(sessionID string, onOutput func([]byte)) error {
+func (s *Session) Resume(sessionID string, rows, cols uint16, onOutput func([]byte)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	log.Printf("[Session %s] Resuming Claude session: %s", s.ID, sessionID)
 
 	// Create command with resume flag
 	s.cmd = exec.Command("claude", "--resume", sessionID)
 	s.cmd.Dir = s.Directory
-	s.cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	s.cmd.Env = append(os.Environ(),
+		"TERM=xterm-256color",
+		"LANG=en_US.UTF-8",
+		"LC_ALL=en_US.UTF-8",
+	)
 
-	// Start with PTY
-	ptmx, err := pty.Start(s.cmd)
+	// Start with PTY and initial size
+	ptmx, err := pty.StartWithSize(s.cmd, &pty.Winsize{
+		Rows: rows,
+		Cols: cols,
+	})
 	if err != nil {
+		log.Printf("[Session %s] Failed to resume Claude: %v", s.ID, err)
 		s.Status = StatusError
 		return err
 	}
 	s.pty = ptmx
 	s.Status = StatusWaitingInput
 	s.UpdatedAt = time.Now()
+	s.LastClaudeSessionID = sessionID
 
 	// Initialize tracker for Claude session
 	now := time.Now()
 	s.tracker.lastOutputTime = now
 	s.tracker.stateChangedAt = now
 	s.tracker.claudeActive = true
+	s.tracker.claudeStartedAt = now
+
+	log.Printf("[Session %s] Claude session resumed successfully", s.ID)
 
 	// Read output in goroutine
 	go s.readOutput(onOutput)
@@ -238,6 +255,21 @@ func (s *Session) Resume(sessionID string, onOutput func([]byte)) error {
 	go s.monitorTimeouts()
 
 	return nil
+}
+
+// SetLastClaudeSessionID updates the Claude session ID
+func (s *Session) SetLastClaudeSessionID(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.LastClaudeSessionID = sessionID
+	s.UpdatedAt = time.Now()
+}
+
+// GetLastClaudeSessionID returns the stored Claude session ID
+func (s *Session) GetLastClaudeSessionID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.LastClaudeSessionID
 }
 
 // Write sends input to the session
@@ -819,41 +851,6 @@ func (s *Session) looksLikeClaudePrompt(line string) bool {
 		return true
 	}
 	return false
-}
-
-// getLastNonEmptyLine returns the last non-empty line from a string
-func getLastNonEmptyLine(s string) string {
-	lines := strings.Split(s, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		// Skip empty lines and lines that are just ANSI codes
-		if len(line) > 0 && !isOnlyAnsiCodes(line) {
-			return line
-		}
-	}
-	return ""
-}
-
-// isOnlyAnsiCodes checks if a string contains only ANSI escape codes
-func isOnlyAnsiCodes(s string) bool {
-	cleaned := s
-	// Remove ANSI escape sequences
-	for strings.Contains(cleaned, "\x1b[") {
-		start := strings.Index(cleaned, "\x1b[")
-		end := start + 2
-		for end < len(cleaned) && !isAnsiTerminator(cleaned[end]) {
-			end++
-		}
-		if end < len(cleaned) {
-			end++ // Include terminator
-		}
-		cleaned = cleaned[:start] + cleaned[end:]
-	}
-	return len(strings.TrimSpace(cleaned)) == 0
-}
-
-func isAnsiTerminator(b byte) bool {
-	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
 }
 
 func containsRune(s string, r rune) bool {
