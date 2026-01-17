@@ -760,41 +760,13 @@ class World3D {
         this.canvas.addEventListener('mousedown', (e) => {
             this.mouseDownTime = Date.now();
             this.mouseDownPos = { x: e.clientX, y: e.clientY };
+            this.hideRadialMenu();
         });
 
         this.canvas.addEventListener('mouseup', (e) => this.onMouseUp(e));
         this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
-        this.canvas.addEventListener('contextmenu', (e) => this.onRightClick(e));
+        this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         window.addEventListener('resize', () => this.onResize());
-    }
-
-    onRightClick(event) {
-        event.preventDefault();
-
-        const rect = this.canvas.getBoundingClientRect();
-        this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-        this.raycaster.setFromCamera(this.mouse, this.camera);
-
-        // Check robots
-        const robotMeshes = [];
-        this.robots.forEach(robot => {
-            robot.traverse(child => {
-                if (child.isMesh) robotMeshes.push(child);
-            });
-        });
-
-        const intersects = this.raycaster.intersectObjects(robotMeshes, false);
-        if (intersects.length > 0) {
-            let obj = intersects[0].object;
-            while (obj.parent && !obj.userData.sessionId) {
-                obj = obj.parent;
-            }
-            if (obj.userData.sessionId) {
-                this.showRadialMenu(event.clientX, event.clientY, obj.userData.sessionId);
-            }
-        }
     }
 
     onMouseUp(event) {
@@ -815,7 +787,7 @@ class World3D {
 
         this.raycaster.setFromCamera(this.mouse, this.camera);
 
-        // Check robots first
+        // Check robots - show radial menu
         const robotMeshes = [];
         this.robots.forEach(robot => {
             robot.traverse(child => {
@@ -829,13 +801,13 @@ class World3D {
             while (obj.parent && !obj.userData.sessionId) {
                 obj = obj.parent;
             }
-            if (obj.userData.sessionId && this.onSessionClick) {
-                this.onSessionClick(obj.userData.sessionId);
+            if (obj.userData.sessionId) {
+                this.showRadialMenu(event.clientX, event.clientY, obj.userData.sessionId);
                 return;
             }
         }
 
-        // Check parcels
+        // Check parcels - show radial menu
         const parcelMeshes = Array.from(this.parcels.values());
         intersects = this.raycaster.intersectObjects(parcelMeshes, true);
         if (intersects.length > 0) {
@@ -843,8 +815,8 @@ class World3D {
             while (obj.parent && !obj.userData.sessionId) {
                 obj = obj.parent;
             }
-            if (obj.userData.sessionId && this.onSessionClick) {
-                this.onSessionClick(obj.userData.sessionId);
+            if (obj.userData.sessionId) {
+                this.showRadialMenu(event.clientX, event.clientY, obj.userData.sessionId);
                 return;
             }
         }
