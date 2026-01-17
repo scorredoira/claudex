@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,9 +13,29 @@ import (
 	"claudex/ws"
 )
 
+type Config struct {
+	Port int `json:"port"`
+}
+
+func loadConfig() Config {
+	config := Config{Port: 9090} // defaults
+
+	configPath := os.ExpandEnv("$HOME/.claudex/config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return config
+	}
+
+	json.Unmarshal(data, &config)
+	return config
+}
+
 func main() {
-	// Session manager
-	manager := session.NewManager("../sessions")
+	config := loadConfig()
+
+	// Session manager - use global path so sessions are shared across worktrees
+	sessionsDir := os.ExpandEnv("$HOME/.claudex/sessions")
+	manager := session.NewManager(sessionsDir)
 
 	// WebSocket handler
 	wsHandler := ws.NewHandler(manager)
@@ -26,12 +48,13 @@ func main() {
 	http.HandleFunc("/api/sessions/", wsHandler.HandleSessionUpdate)
 	http.HandleFunc("/api/client-state", wsHandler.HandleClientState)
 
-	// Static files (web frontend) - from filesystem for development
-	http.Handle("/", http.FileServer(http.Dir("../web")))
+	// Static files (web frontend)
+	webDir := os.ExpandEnv("$HOME/.claudex/web")
+	http.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "9090"
+		port = fmt.Sprintf("%d", config.Port)
 	}
 
 	// Handle shutdown gracefully - save all session states
