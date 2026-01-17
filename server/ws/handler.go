@@ -245,11 +245,10 @@ func (h *Handler) handleStart(conn *websocket.Conn, sessionID string, data json.
 		return
 	}
 
-	// Parse initial size and auto-resume flag from data
+	// Parse initial size from data
 	var startData struct {
-		Rows       uint16 `json:"rows"`
-		Cols       uint16 `json:"cols"`
-		AutoResume *bool  `json:"autoResume,omitempty"` // nil = auto-detect, true = force resume, false = shell only
+		Rows uint16 `json:"rows"`
+		Cols uint16 `json:"cols"`
 	}
 	rows := uint16(24)
 	cols := uint16(80)
@@ -270,33 +269,75 @@ func (h *Handler) handleStart(conn *websocket.Conn, sessionID string, data json.
 		h.scheduleScrollbackSave(sessionID, sess)
 	}
 
-	// Check for Claude Code session to resume
-	shouldAutoResume := startData.AutoResume == nil || *startData.AutoResume
-	if shouldAutoResume {
+	// Check for saved Claude Code session to resume (only resume the specific saved session)
+	savedSessionID := sess.GetLastClaudeSessionID()
+	if savedSessionID != "" {
+		// Verify the saved session still exists and is recent
 		claudeSession, err := claude.FindActiveSession(sess.Directory)
-		if err == nil && claudeSession != nil {
-			// Check if session is recent (within last 24 hours)
+		if err == nil && claudeSession != nil && claudeSession.SessionID == savedSessionID {
 			modified, err := time.Parse(time.RFC3339, claudeSession.Modified)
 			if err == nil && time.Since(modified) < 24*time.Hour {
-				log.Printf("[WS] Found recent Claude session %s for directory %s, auto-resuming",
-					claudeSession.SessionID, sess.Directory)
+				log.Printf("[WS] Resuming saved Claude session %s for directory %s",
+					savedSessionID, sess.Directory)
 
-				// Resume the Claude session instead of starting a shell
-				err := sess.Resume(claudeSession.SessionID, rows, cols, outputCallback)
+				err := sess.Resume(savedSessionID, rows, cols, outputCallback)
 				if err == nil {
-					// Save the Claude session ID
-					h.manager.UpdateSession(sess)
 					return
 				}
-				log.Printf("[WS] Failed to resume Claude session, falling back to shell: %v", err)
+				log.Printf("[WS] Failed to resume saved Claude session, falling back to shell: %v", err)
 			}
 		}
 	}
 
-	// Start normal shell if no Claude session to resume
+	// Start normal shell
 	err := sess.Start(rows, cols, outputCallback)
 	if err != nil {
 		log.Printf("Failed to start session %s: %v", sessionID, err)
+	}
+
+	// Start background task to detect Claude session
+	go h.detectClaudeSession(sessionID, sess)
+}
+
+// detectClaudeSession monitors for new Claude sessions and saves the session ID
+func (h *Handler) detectClaudeSession(sessionID string, sess *session.Session) {
+	// Check every 2 seconds for up to 5 minutes
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	timeout := time.After(5 * time.Minute)
+	lastSessionID := ""
+
+	for {
+		select {
+		case <-ticker.C:
+			// Check if session is still running
+			if sess.GetStatus() == session.StatusStopped {
+				return
+			}
+
+			// Look for Claude session
+			claudeSession, err := claude.FindActiveSession(sess.Directory)
+			if err != nil || claudeSession == nil {
+				continue
+			}
+
+			// If we found a new session, save it
+			if claudeSession.SessionID != lastSessionID {
+				lastSessionID = claudeSession.SessionID
+
+				// Only save if it's different from what's already saved
+				if sess.GetLastClaudeSessionID() != claudeSession.SessionID {
+					log.Printf("[WS] Detected new Claude session %s for Claudex session %s",
+						claudeSession.SessionID, sessionID)
+					sess.SetLastClaudeSessionID(claudeSession.SessionID)
+					h.manager.UpdateSession(sess)
+				}
+			}
+
+		case <-timeout:
+			return
+		}
 	}
 }
 
@@ -349,11 +390,10 @@ func (h *Handler) handleRestart(conn *websocket.Conn, sessionID string, data jso
 	// Reset the session for restart
 	sess.Reset()
 
-	// Parse size and auto-resume from data
+	// Parse size from data
 	var restartData struct {
-		Rows       uint16 `json:"rows"`
-		Cols       uint16 `json:"cols"`
-		AutoResume *bool  `json:"autoResume,omitempty"`
+		Rows uint16 `json:"rows"`
+		Cols uint16 `json:"cols"`
 	}
 	rows := uint16(24)
 	cols := uint16(80)
@@ -370,20 +410,19 @@ func (h *Handler) handleRestart(conn *websocket.Conn, sessionID string, data jso
 		h.scheduleScrollbackSave(sessionID, sess)
 	}
 
-	// Check for Claude Code session to resume
-	shouldAutoResume := restartData.AutoResume == nil || *restartData.AutoResume
-	if shouldAutoResume {
+	// Check for saved Claude Code session to resume (only resume the specific saved session)
+	savedSessionID := sess.GetLastClaudeSessionID()
+	if savedSessionID != "" {
 		claudeSession, err := claude.FindActiveSession(sess.Directory)
-		if err == nil && claudeSession != nil {
+		if err == nil && claudeSession != nil && claudeSession.SessionID == savedSessionID {
 			modified, err := time.Parse(time.RFC3339, claudeSession.Modified)
 			if err == nil && time.Since(modified) < 24*time.Hour {
-				log.Printf("[WS] Found recent Claude session %s, auto-resuming on restart", claudeSession.SessionID)
-				err := sess.Resume(claudeSession.SessionID, rows, cols, outputCallback)
+				log.Printf("[WS] Resuming saved Claude session %s on restart", savedSessionID)
+				err := sess.Resume(savedSessionID, rows, cols, outputCallback)
 				if err == nil {
-					h.manager.UpdateSession(sess)
 					return
 				}
-				log.Printf("[WS] Failed to resume Claude session on restart: %v", err)
+				log.Printf("[WS] Failed to resume saved Claude session on restart: %v", err)
 			}
 		}
 	}
@@ -393,6 +432,9 @@ func (h *Handler) handleRestart(conn *websocket.Conn, sessionID string, data jso
 	if err != nil {
 		log.Printf("Failed to restart session %s: %v", sessionID, err)
 	}
+
+	// Start background task to detect Claude session
+	go h.detectClaudeSession(sessionID, sess)
 }
 
 // broadcastOutput sends output to all subscribed connections
