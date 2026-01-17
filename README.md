@@ -13,25 +13,30 @@
 
 ## Features
 
-- **3D World View**: Navigate your sessions in an interactive 3D environment with cute robots on hexagonal tiles
+### Session Management
 - **Multiple Sessions**: Run several Claude Code instances simultaneously
-- **Real-time Status**: Visual indicators show what each session is doing (idle, thinking, executing, waiting for input)
-- **Full Terminal**: Complete xterm.js terminal with UTF-8 support and all keyboard shortcuts
+- **Auto-Resume**: Automatically resumes your last Claude Code session when opening a robot (sessions < 24h)
 - **Session Experiments**: Fork any session to create experimental branches
-- **Robot Customization**: Personalize each session's robot with different models, colors, and accessories
-- **Light/Dark Theme**: Toggle between themes with persistent preference
+- **Fullscreen Terminal**: Sessions open in fullscreen with complete xterm.js terminal
+- **State Persistence**: Sessions, camera position, and UI preferences are saved server-side
+
+### 3D World
+- **Interactive Environment**: Navigate your sessions in a 3D world with cute robots on hexagonal tiles
+- **Robot Customization**: Personalize each robot with different models, colors, and accessories
+- **Living World**: Grass details with flowers, tufts, and small rocks; animated clouds
+- **Separate Islands**: Create disconnected hex islands by double-clicking on empty space
+- **Real-time Status**: Visual indicators show what each session is doing (idle, thinking, executing, waiting for input)
+
+### Claude Code Integration
+- **Claude State Detection**: Reads Claude Code JSONL transcripts to show current tool, model, and token usage in tooltips
+- **Multiline Input**: Shift+Enter inserts newlines without executing (like native Claude Code)
 - **Desktop Notifications**: Get notified when a session needs your attention
 
+### UI
+- **Light/Dark Theme**: Toggle between themes with persistent preference
+- **Two Views**: 3D World or traditional Cards grid layout
+
 ![Terminal Session](docs/images/terminal-session.png)
-
-## Views
-
-Switch between two views:
-
-- **3D World**: Interactive hexagonal world where each session is represented by a customizable robot
-- **Cards View**: Traditional grid layout showing session cards
-
-![Cards View](docs/images/cards-view.png)
 
 ## Quick Start
 
@@ -48,7 +53,25 @@ go build -o claudex .
 ./claudex
 ```
 
-Open http://localhost:8080
+Open http://localhost:9090
+
+## Keyboard Shortcuts
+
+### 3D View
+| Shortcut | Action |
+|----------|--------|
+| **Click** on robot/tile | Open session |
+| **Right-click** on robot/tile | Show action menu (experiment, customize, restart, delete) |
+| **Click** on empty tile | Create new session |
+| **Double-click** on empty space | Create new island |
+| **Space** | Center camera on sessions |
+| **Cmd/Ctrl** (hold) | Show session labels on tiles |
+
+### Terminal
+| Shortcut | Action |
+|----------|--------|
+| **Shift+Enter** | Insert newline (multiline input) |
+| **Shift+Escape** | Close session |
 
 ## Architecture
 
@@ -56,6 +79,8 @@ Open http://localhost:8080
 claudex/
 ├── server/              # Go backend
 │   ├── main.go          # HTTP server entry point
+│   ├── claude/
+│   │   └── transcript.go # Claude Code JSONL transcript reader
 │   ├── session/
 │   │   ├── session.go   # PTY session with Claude Code
 │   │   └── manager.go   # Multi-session management
@@ -76,35 +101,34 @@ claudex/
 - **Frontend**: Vanilla JavaScript with [xterm.js](https://xtermjs.org/) and [Three.js](https://threejs.org/)
 - **Communication**: WebSocket with Base64 encoding for proper UTF-8 handling
 
-## Keyboard Shortcuts (3D View)
-
-- **Space**: Center camera on sessions
-- **Cmd/Ctrl**: Show session labels on tiles
-- **Click on robot**: Open radial action menu
-- **Click on empty tile**: Create new session
-
 ## API
+
+### REST Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/sessions` | List all sessions |
+| POST | `/api/sessions/create` | Create new session |
+| DELETE | `/api/sessions/{id}` | Delete session |
+| PUT | `/api/sessions/{id}/name` | Rename session |
+| PUT | `/api/sessions/{id}/customize` | Update robot customization |
+| POST | `/api/sessions/{id}/experiment` | Create experiment fork |
+| GET | `/api/sessions/{id}/claude-state` | Get Claude Code state |
+| GET | `/api/sessions/{id}/claude-session` | Check for resumable Claude session |
+| GET | `/api/client-state` | Get UI state (camera, theme, etc.) |
+| PUT | `/api/client-state` | Save UI state |
 
 ### WebSocket Messages
 
-Client → Server:
+**Client → Server:**
 - `subscribe` / `unsubscribe`: Session output subscription
 - `start` / `stop`: Control Claude Code process
 - `input`: Send terminal input
 - `resize`: Update terminal dimensions
 
-Server → Client:
+**Server → Client:**
 - `output`: Terminal data (Base64)
 - `status`: Session state changes
-
-### REST Endpoints
-
-- `GET /api/sessions` - List all sessions
-- `POST /api/sessions/create` - Create new session
-- `DELETE /api/sessions/{id}` - Delete session
-- `PUT /api/sessions/{id}/name` - Rename session
-- `PUT /api/sessions/{id}/customize` - Update robot customization
-- `POST /api/sessions/{id}/experiment` - Create experiment fork
 
 ## License
 
