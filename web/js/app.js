@@ -740,8 +740,32 @@ class Claudex {
 
         // Restart session
         document.getElementById('modal-restart').onclick = () => this.restartSession();
-        document.getElementById('modal').onclick = (e) => {
-            if (e.target.id === 'modal') this.closeModal();
+
+        // Experiment from modal
+        document.getElementById('modal-experiment').onclick = () => {
+            if (this.activeSessionId) {
+                this.createExperiment(this.activeSessionId);
+            }
+        };
+
+        // Customize from modal
+        document.getElementById('modal-customize').onclick = () => {
+            if (this.activeSessionId && this.world3d) {
+                this.closeModal();
+                this.world3d.onCustomizeSession(this.activeSessionId);
+            }
+        };
+
+        // Delete from modal
+        document.getElementById('modal-delete').onclick = () => {
+            if (this.activeSessionId) {
+                const session = this.sessions.get(this.activeSessionId);
+                const name = session?.name || this.activeSessionId;
+                this.showConfirm(`Delete "${name}"?`, () => {
+                    this.deleteSession(this.activeSessionId);
+                    this.closeModal();
+                });
+            }
         };
 
         // Keyboard shortcuts

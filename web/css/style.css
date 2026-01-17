@@ -125,6 +125,14 @@ header h1 {
     color: var(--text-primary);
 }
 
+.btn-icon svg {
+    display: block;
+}
+
+.btn-icon-danger:hover {
+    color: var(--status-waiting);
+}
+
 /* Sessions Grid */
 #sessions-grid {
     display: flex;
