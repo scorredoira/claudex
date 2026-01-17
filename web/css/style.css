@@ -510,3 +510,66 @@ header h1 {
     margin-bottom: 0.5rem;
     color: var(--text-primary);
 }
+
+/* 3D View Toggle Button */
+.view-toggle {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 0.4rem 0.8rem;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.view-toggle:hover {
+    background: var(--bg-primary);
+    border-color: var(--accent);
+}
+
+.view-toggle.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+}
+
+/* 3D World Container */
+#world-3d {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    background: #0a0a0f;
+}
+
+#canvas-3d {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* Session Tooltip */
+.session-tooltip {
+    position: fixed;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    pointer-events: none;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.session-tooltip.hidden {
+    display: none;
+}
+
+/* Hide grid when 3D is active */
+#sessions-grid.hidden {
+    display: none;
+}

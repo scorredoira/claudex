@@ -12,6 +12,9 @@
         <header>
             <h1>Claudex</h1>
             <div class="header-actions">
+                <button id="view-toggle" class="view-toggle" title="Toggle 3D view">
+                    <span class="view-icon">3D</span>
+                </button>
                 <button id="theme-toggle" class="theme-toggle">
                     <span class="theme-icon">☀️</span>
                     <span class="theme-label">Dark</span>
@@ -23,6 +26,12 @@
         <main id="sessions-grid">
             <!-- Session cards will be inserted here -->
         </main>
+
+        <!-- 3D World Container -->
+        <div id="world-3d" class="hidden">
+            <canvas id="canvas-3d"></canvas>
+            <div id="session-tooltip" class="session-tooltip hidden"></div>
+        </div>
 
         <!-- Modal for expanded session -->
         <div id="modal" class="modal hidden">
@@ -73,6 +82,10 @@
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-unicode11@0.6.0/lib/xterm-addon-unicode11.min.js"></script>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="js/world3d.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

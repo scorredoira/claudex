@@ -6,6 +6,8 @@ class Claudex {
         this.ws = null;
         this.activeSessionId = null;
         this.modalTerminal = null;
+        this.world3d = null;
+        this.is3DView = false;
 
         this.init();
     }
@@ -85,6 +87,11 @@ class Claudex {
 
         // Update UI
         this.updateCardStatus(sessionId, status);
+
+        // Update 3D world
+        if (this.world3d) {
+            this.world3d.updateSessionStatus(sessionId, status);
+        }
 
         // Notification when finished (was thinking/executing, now waiting)
         if ((oldStatus === 'thinking' || oldStatus === 'executing') &&
@@ -194,6 +201,14 @@ class Claudex {
             if (experiments.length === 0) {
                 this.applySavedOrder();
             }
+
+            // Update 3D world if active
+            if (this.world3d) {
+                this.world3d.updateSessions(this.sessions);
+            }
+
+            // Restore 3D view preference after sessions are loaded
+            this.restore3DViewPreference();
         } catch (err) {
             console.error('Failed to load sessions:', err);
         }
@@ -319,6 +334,11 @@ class Claudex {
             this.sessions.set(session.id, session);
             this.createCard(session);
 
+            // Update 3D world
+            if (this.world3d) {
+                this.world3d.updateSessions(this.sessions);
+            }
+
             // Open the new session
             this.openSession(session.id);
         } catch (err) {
@@ -344,6 +364,11 @@ class Claudex {
             this.sessions.set(session.id, session);
             this.createCard(session);
 
+            // Update 3D world
+            if (this.world3d) {
+                this.world3d.updateSessions(this.sessions);
+            }
+
             // Open the new experiment session
             this.openSession(session.id);
         } catch (err) {
@@ -365,6 +390,11 @@ class Claudex {
             const card = document.querySelector(`[data-session-id="${sessionId}"]`);
             if (card) {
                 card.remove();
+            }
+
+            // Update 3D world
+            if (this.world3d) {
+                this.world3d.updateSessions(this.sessions);
             }
 
             // Close modal if this session is open
@@ -573,6 +603,11 @@ class Claudex {
 
     // Event listeners
     setupEventListeners() {
+        // 3D View toggle
+        document.getElementById('view-toggle').onclick = () => {
+            this.toggle3DView();
+        };
+
         // Theme toggle
         const themeToggle = document.getElementById('theme-toggle');
         const savedTheme = localStorage.getItem('theme') || 'light';
@@ -653,6 +688,101 @@ class Claudex {
         // Update modal terminal theme
         if (this.modalTerminal) {
             this.modalTerminal.options.theme = this.getTerminalTheme(isDark);
+        }
+    }
+
+    // 3D View methods
+    init3DWorld() {
+        if (this.world3d) return;
+
+        const canvas = document.getElementById('canvas-3d');
+        if (!canvas) return;
+
+        this.world3d = new World3D(
+            canvas,
+            // On session click
+            (sessionId) => {
+                this.openSession(sessionId);
+            },
+            // On create session (click on empty parcel)
+            (q, r) => {
+                this.createSessionAt3D(q, r);
+            }
+        );
+
+        // Sync current sessions
+        this.world3d.updateSessions(this.sessions);
+    }
+
+    async createSessionAt3D(q, r) {
+        // Generate a fun name based on position
+        const names = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta'];
+        const adjectives = ['Happy', 'Busy', 'Clever', 'Swift', 'Bright', 'Calm'];
+        const name = `${adjectives[Math.abs(q + r) % adjectives.length]} ${names[Math.abs(q * 2 + r) % names.length]}`;
+
+        try {
+            const response = await fetch('/api/sessions/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+
+            const session = await response.json();
+            this.sessions.set(session.id, session);
+            this.createCard(session);
+
+            // Update 3D world
+            if (this.world3d) {
+                this.world3d.updateSessions(this.sessions);
+            }
+
+            // Open the new session
+            this.openSession(session.id);
+        } catch (err) {
+            console.error('Failed to create session:', err);
+        }
+    }
+
+    toggle3DView() {
+        this.is3DView = !this.is3DView;
+
+        const grid = document.getElementById('sessions-grid');
+        const world3d = document.getElementById('world-3d');
+        const viewToggle = document.getElementById('view-toggle');
+        const viewIcon = viewToggle.querySelector('.view-icon');
+
+        if (this.is3DView) {
+            // Switch to 3D
+            grid.classList.add('hidden');
+            world3d.classList.remove('hidden');
+            viewIcon.textContent = '2D';
+            viewToggle.classList.add('active');
+
+            // Initialize if needed
+            if (!this.world3d) {
+                this.init3DWorld();
+            }
+            this.world3d.activate();
+            this.world3d.updateSessions(this.sessions);
+        } else {
+            // Switch to 2D
+            grid.classList.remove('hidden');
+            world3d.classList.add('hidden');
+            viewIcon.textContent = '3D';
+            viewToggle.classList.remove('active');
+
+            if (this.world3d) {
+                this.world3d.deactivate();
+            }
+        }
+
+        localStorage.setItem('view3d', this.is3DView);
+    }
+
+    restore3DViewPreference() {
+        const saved = localStorage.getItem('view3d');
+        if (saved === 'true') {
+            this.toggle3DView();
         }
     }
 
