@@ -31,8 +31,11 @@ type SessionInfo struct {
 	LastInputAt  string            `json:"last_input_at,omitempty"`
 	Directory    string            `json:"directory"`
 	ParentID     string            `json:"parent_id,omitempty"`
-	WorktreePath string            `json:"worktree_path,omitempty"`
-	Branch       string            `json:"branch,omitempty"`
+	WorktreePath   string            `json:"worktree_path,omitempty"`
+	Branch         string            `json:"branch,omitempty"`
+	RobotModel     string            `json:"robot_model,omitempty"`
+	RobotColor     string            `json:"robot_color,omitempty"`
+	RobotAccessory string            `json:"robot_accessory,omitempty"`
 }
 
 // NewManager creates a new session manager
@@ -116,19 +119,22 @@ func (m *Manager) Delete(id string) error {
 // saveSession persists a session to disk
 func (m *Manager) saveSession(s *Session) error {
 	info := SessionInfo{
-		ID:           s.ID,
-		Name:         s.Name,
-		Status:       s.Status,
-		Color:        s.Color,
-		Position:     s.Position,
-		Metadata:     s.Metadata,
-		CreatedAt:    s.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:    s.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		LastInputAt:  s.LastInputAt.Format("2006-01-02T15:04:05Z07:00"),
-		Directory:    s.Directory,
-		ParentID:     s.ParentID,
-		WorktreePath: s.WorktreePath,
-		Branch:       s.Branch,
+		ID:             s.ID,
+		Name:           s.Name,
+		Status:         s.Status,
+		Color:          s.Color,
+		Position:       s.Position,
+		Metadata:       s.Metadata,
+		CreatedAt:      s.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:      s.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		LastInputAt:    s.LastInputAt.Format("2006-01-02T15:04:05Z07:00"),
+		Directory:      s.Directory,
+		ParentID:       s.ParentID,
+		WorktreePath:   s.WorktreePath,
+		Branch:         s.Branch,
+		RobotModel:     s.RobotModel,
+		RobotColor:     s.RobotColor,
+		RobotAccessory: s.RobotAccessory,
 	}
 
 	data, err := json.MarshalIndent(info, "", "  ")
@@ -164,21 +170,24 @@ func (m *Manager) loadSessions() {
 		lastInputAt, _ := time.Parse("2006-01-02T15:04:05Z07:00", info.LastInputAt)
 
 		session := &Session{
-			ID:           info.ID,
-			Name:         info.Name,
-			Status:       StatusIdle, // Reset to idle on load (including error states)
-			Color:        info.Color,
-			Position:     info.Position,
-			Metadata:     info.Metadata,
-			Directory:    info.Directory,
-			ParentID:     info.ParentID,
-			WorktreePath: info.WorktreePath,
-			Branch:       info.Branch,
-			CreatedAt:    createdAt,
-			UpdatedAt:    updatedAt,
-			LastInputAt:  lastInputAt,
-			done:         make(chan struct{}),
-			tracker:      newStateTracker(),
+			ID:             info.ID,
+			Name:           info.Name,
+			Status:         StatusIdle, // Reset to idle on load (including error states)
+			Color:          info.Color,
+			Position:       info.Position,
+			Metadata:       info.Metadata,
+			Directory:      info.Directory,
+			ParentID:       info.ParentID,
+			WorktreePath:   info.WorktreePath,
+			Branch:         info.Branch,
+			RobotModel:     info.RobotModel,
+			RobotColor:     info.RobotColor,
+			RobotAccessory: info.RobotAccessory,
+			CreatedAt:      createdAt,
+			UpdatedAt:      updatedAt,
+			LastInputAt:    lastInputAt,
+			done:           make(chan struct{}),
+			tracker:        newStateTracker(),
 		}
 
 		// Load scrollback if exists

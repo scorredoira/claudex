@@ -481,6 +481,42 @@ func (h *Handler) HandleSessionUpdate(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 
+	case "customize":
+		if r.Method != http.MethodPut {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			Name           string `json:"name,omitempty"`
+			RobotModel     string `json:"robot_model,omitempty"`
+			RobotColor     string `json:"robot_color,omitempty"`
+			RobotAccessory string `json:"robot_accessory,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// Update fields if provided
+		if req.Name != "" {
+			sess.Name = req.Name
+		}
+		if req.RobotModel != "" {
+			sess.RobotModel = req.RobotModel
+		}
+		if req.RobotColor != "" {
+			sess.RobotColor = req.RobotColor
+		}
+		if req.RobotAccessory != "" {
+			sess.RobotAccessory = req.RobotAccessory
+		}
+
+		h.manager.UpdateSession(sess)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
 	default:
 		http.Error(w, "Unknown action", http.StatusBadRequest)
 	}

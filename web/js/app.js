@@ -769,8 +769,138 @@ class Claudex {
     }
 
     showCustomizePanel(sessionId) {
-        // TODO: implement customize panel
-        console.log('Customize session:', sessionId);
+        const session = this.sessions.get(sessionId);
+        if (!session) return;
+
+        const panel = document.getElementById('customize-panel');
+        const nameInput = document.getElementById('customize-name');
+
+        // Store current session being customized
+        this.customizingSessionId = sessionId;
+
+        // Load current values
+        nameInput.value = session.name || '';
+
+        // Select current model
+        const currentModel = session.robot_model || 'classic';
+        panel.querySelectorAll('.robot-model-option').forEach(opt => {
+            opt.classList.toggle('selected', opt.dataset.model === currentModel);
+        });
+
+        // Select current color
+        const currentColor = session.robot_color || '#6366f1';
+        panel.querySelectorAll('.color-option').forEach(opt => {
+            opt.classList.toggle('selected', opt.dataset.color === currentColor);
+        });
+
+        // Select current accessory
+        const currentAccessory = session.robot_accessory || 'none';
+        panel.querySelectorAll('.accessory-option').forEach(opt => {
+            opt.classList.toggle('selected', opt.dataset.accessory === currentAccessory);
+        });
+
+        // Show panel
+        panel.classList.add('active');
+
+        // Setup event handlers (only once)
+        if (!this.customizePanelInitialized) {
+            this.initCustomizePanel();
+            this.customizePanelInitialized = true;
+        }
+    }
+
+    initCustomizePanel() {
+        const panel = document.getElementById('customize-panel');
+
+        // Close button
+        document.getElementById('customize-close').onclick = () => {
+            panel.classList.remove('active');
+        };
+
+        // Click outside to close
+        document.addEventListener('click', (e) => {
+            if (panel.classList.contains('active') &&
+                !panel.contains(e.target) &&
+                !e.target.closest('.radial-menu')) {
+                panel.classList.remove('active');
+            }
+        });
+
+        // Name change
+        document.getElementById('customize-name').onchange = (e) => {
+            if (this.customizingSessionId) {
+                this.updateSessionName(this.customizingSessionId, e.target.value);
+            }
+        };
+
+        // Model selection
+        panel.querySelectorAll('.robot-model-option').forEach(opt => {
+            opt.onclick = () => {
+                panel.querySelectorAll('.robot-model-option').forEach(o => o.classList.remove('selected'));
+                opt.classList.add('selected');
+                this.updateSessionCustomization('robotModel', opt.dataset.model);
+            };
+        });
+
+        // Color selection
+        panel.querySelectorAll('.color-option').forEach(opt => {
+            opt.onclick = () => {
+                panel.querySelectorAll('.color-option').forEach(o => o.classList.remove('selected'));
+                opt.classList.add('selected');
+                this.updateSessionCustomization('robotColor', opt.dataset.color);
+            };
+        });
+
+        // Accessory selection
+        panel.querySelectorAll('.accessory-option').forEach(opt => {
+            opt.onclick = () => {
+                panel.querySelectorAll('.accessory-option').forEach(o => o.classList.remove('selected'));
+                opt.classList.add('selected');
+                this.updateSessionCustomization('robotAccessory', opt.dataset.accessory);
+            };
+        });
+    }
+
+    async updateSessionCustomization(key, value) {
+        if (!this.customizingSessionId) return;
+
+        const session = this.sessions.get(this.customizingSessionId);
+        if (!session) return;
+
+        // Map camelCase key to snake_case for session storage
+        const keyMap = {
+            robotModel: 'robot_model',
+            robotColor: 'robot_color',
+            robotAccessory: 'robot_accessory'
+        };
+        const snakeKey = keyMap[key] || key;
+
+        // Update local state
+        session[snakeKey] = value;
+
+        // Update 3D world immediately
+        if (this.world3d) {
+            this.world3d.updateRobotCustomization(this.customizingSessionId, {
+                model: session.robot_model || 'classic',
+                color: session.robot_color || '#6366f1',
+                accessory: session.robot_accessory || 'none'
+            });
+        }
+
+        // Save to server
+        try {
+            await fetch(`/api/sessions/${this.customizingSessionId}/customize`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    robot_model: session.robot_model,
+                    robot_color: session.robot_color,
+                    robot_accessory: session.robot_accessory
+                })
+            });
+        } catch (err) {
+            console.error('Failed to save customization:', err);
+        }
     }
 
     async createSessionAt3D(q, r) {

@@ -87,6 +87,11 @@ type Session struct {
 	WorktreePath string            `json:"worktree_path,omitempty"`  // Git worktree path
 	Branch       string            `json:"branch,omitempty"`         // Git branch name
 
+	// Robot customization (3D visualization)
+	RobotModel     string `json:"robot_model,omitempty"`     // Robot model type (classic, round, tall, chunky, mini, angular)
+	RobotColor     string `json:"robot_color,omitempty"`     // Custom robot color (hex)
+	RobotAccessory string `json:"robot_accessory,omitempty"` // Accessory (none, hat, glasses, bowtie, antenna)
+
 	// Internal fields (not serialized)
 	cmd        *exec.Cmd
 	pty        *os.File

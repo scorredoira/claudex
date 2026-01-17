@@ -6,8 +6,8 @@
     --text-primary: #1a1a1a;
     --text-secondary: #666666;
     --border-color: #e0e0e0;
-    --accent: #6366f1;
-    --accent-hover: #818cf8;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
     --status-thinking: #f59e0b;
     --status-executing: #3b82f6;
     --status-waiting: #ef4444;
@@ -590,6 +590,39 @@ header h1 {
     pointer-events: auto;
 }
 
+.radial-menu-info {
+    position: absolute;
+    top: -160px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.6rem 1rem;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    text-align: center;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 10;
+}
+
+.radial-menu.active .radial-menu-info {
+    opacity: 1;
+}
+
+.radial-info-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+.radial-info-details {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 0.2rem;
+}
+
 .radial-menu-center {
     position: absolute;
     width: 50px;
@@ -641,11 +674,12 @@ header h1 {
     transform: translate(-50%, -50%) scale(1);
 }
 
-.radial-item:nth-child(2) { left: 0px; top: -70px; }
-.radial-item:nth-child(3) { left: 67px; top: -22px; }
-.radial-item:nth-child(4) { left: 41px; top: 57px; }
-.radial-item:nth-child(5) { left: -41px; top: 57px; }
-.radial-item:nth-child(6) { left: -67px; top: -22px; }
+/* 5 items at 72° intervals, radius 70px, starting from top */
+.radial-item:nth-child(3) { left: 0px; top: -70px; }           /* Open - top */
+.radial-item:nth-child(4) { left: 67px; top: -22px; }          /* Customize - top right */
+.radial-item:nth-child(5) { left: 41px; top: 57px; }           /* Restart - bottom right */
+.radial-item:nth-child(6) { left: -41px; top: 57px; }          /* Experiment - bottom left */
+.radial-item:nth-child(7) { left: -67px; top: -22px; }         /* Delete - top left */
 
 .radial-item:hover {
     background: var(--accent);
@@ -686,6 +720,24 @@ header h1 {
 
 .radial-item:hover .radial-item-label {
     opacity: 1;
+}
+
+.radial-item-label.label-top {
+    bottom: 55px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.radial-item-label.label-right {
+    left: 55px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.radial-item-label.label-left {
+    right: 55px;
+    top: 50%;
+    transform: translateY(-50%);
 }
 
 /* Pending session ghost effect */
@@ -740,4 +792,157 @@ header h1 {
 .pending-cancel:hover {
     border-color: var(--status-waiting);
     color: var(--status-waiting);
+}
+
+/* Customize Panel */
+.customize-panel {
+    position: fixed;
+    top: 60px;
+    right: -320px;
+    width: 300px;
+    height: calc(100vh - 60px);
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--border-color);
+    padding: 1.5rem;
+    z-index: 600;
+    transition: right 0.3s ease;
+    overflow-y: auto;
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.2);
+}
+
+.customize-panel.active {
+    right: 0;
+}
+
+.customize-panel h3 {
+    margin-bottom: 1.5rem;
+    font-size: 1.1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.customize-panel .close-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    line-height: 1;
+}
+
+.customize-panel .close-btn:hover {
+    color: var(--text-primary);
+}
+
+.customize-section {
+    margin-bottom: 1.5rem;
+}
+
+.customize-section label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.customize-section input[type="text"] {
+    width: 100%;
+    padding: 0.5rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.customize-section input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* Robot model selector */
+.robot-models {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+}
+
+.robot-model-option {
+    aspect-ratio: 1;
+    background: var(--bg-primary);
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.15s, transform 0.15s;
+}
+
+.robot-model-option:hover {
+    border-color: var(--accent);
+    transform: scale(1.05);
+}
+
+.robot-model-option.selected {
+    border-color: var(--accent);
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.robot-model-option svg {
+    width: 40px;
+    height: 40px;
+}
+
+/* Color picker */
+.color-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.color-option {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform 0.15s, border-color 0.15s;
+}
+
+.color-option:hover {
+    transform: scale(1.15);
+}
+
+.color-option.selected {
+    border-color: var(--text-primary);
+    box-shadow: 0 0 0 2px var(--bg-secondary);
+}
+
+/* Accessories */
+.accessory-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.accessory-option {
+    padding: 0.4rem 0.8rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.accessory-option:hover {
+    border-color: var(--accent);
+}
+
+.accessory-option.selected {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
 }

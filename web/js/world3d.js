@@ -385,20 +385,63 @@ class World3D {
         return parcel;
     }
 
-    // Low-poly cute robot
+    // Create robot with customization options
     createRobot(session) {
         const robot = new THREE.Group();
         const status = session.status || 'idle';
-        const color = this.statusColors[status] || this.statusColors.idle;
+        const model = session.robot_model || 'classic';
+        const customColor = session.robot_color ? parseInt(session.robot_color.replace('#', ''), 16) : null;
+        const accessory = session.robot_accessory || 'none';
 
-        // Body (rounded box shape using segments)
+        // Build robot based on model
+        this.buildRobotModel(robot, model, status, customColor);
+
+        // Add accessory
+        this.addRobotAccessory(robot, accessory);
+
+        robot.userData.sessionId = session.id;
+        robot.userData.session = session;
+        robot.userData.status = status;
+        robot.userData.model = model;
+        robot.userData.customColor = customColor;
+        robot.userData.accessory = accessory;
+        robot.userData.animTime = Math.random() * Math.PI * 2;
+
+        // Status indicator above head
+        this.createStatusIndicator(robot, status);
+
+        return robot;
+    }
+
+    buildRobotModel(robot, model, status, customColor) {
+        const statusColor = this.statusColors[status] || this.statusColors.idle;
+        const bodyColor = customColor !== null ? customColor : statusColor;
+
+        switch (model) {
+            case 'round':
+                this.buildRoundRobot(robot, bodyColor);
+                break;
+            case 'tall':
+                this.buildTallRobot(robot, bodyColor);
+                break;
+            case 'chunky':
+                this.buildChunkyRobot(robot, bodyColor);
+                break;
+            case 'mini':
+                this.buildMiniRobot(robot, bodyColor);
+                break;
+            case 'angular':
+                this.buildAngularRobot(robot, bodyColor);
+                break;
+            default:
+                this.buildClassicRobot(robot, bodyColor);
+        }
+    }
+
+    buildClassicRobot(robot, color) {
+        // Body
         const bodyGeo = new THREE.BoxGeometry(0.5, 0.6, 0.4);
-        const bodyMat = new THREE.MeshStandardMaterial({
-            color: color,
-            roughness: 0.3,
-            metalness: 0.2,
-            flatShading: true
-        });
+        const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.3, metalness: 0.2, flatShading: true });
         const body = new THREE.Mesh(bodyGeo, bodyMat);
         body.position.y = 0.6;
         body.castShadow = true;
@@ -408,105 +451,335 @@ class World3D {
 
         // Head
         const headGeo = new THREE.BoxGeometry(0.45, 0.35, 0.35);
-        const headMat = new THREE.MeshStandardMaterial({
-            color: 0xffffff,
-            roughness: 0.3,
-            metalness: 0.1,
-            flatShading: true
-        });
+        const headMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, flatShading: true });
         const head = new THREE.Mesh(headGeo, headMat);
         head.position.y = 1.1;
-        head.castShadow = true;
         robot.add(head);
         robot.userData.head = head;
+        robot.userData.headY = 1.1;
 
         // Eyes
         const eyeGeo = new THREE.BoxGeometry(0.1, 0.1, 0.05);
         const eyeMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
-
         const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
         leftEye.position.set(-0.12, 1.12, 0.17);
         robot.add(leftEye);
-
         const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
         rightEye.position.set(0.12, 1.12, 0.17);
         robot.add(rightEye);
 
-        robot.userData.leftEye = leftEye;
-        robot.userData.rightEye = rightEye;
-
         // Antenna
+        this.addAntenna(robot, 1.35, 1.48, color);
+
+        // Arms
+        this.addArms(robot, 0.35, 0.55);
+
+        // Legs
+        this.addLegs(robot, 0.13, 0.2);
+    }
+
+    buildRoundRobot(robot, color) {
+        // Round body
+        const bodyGeo = new THREE.SphereGeometry(0.35, 12, 8);
+        const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.3, metalness: 0.2 });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.y = 0.55;
+        body.castShadow = true;
+        robot.add(body);
+        robot.userData.body = body;
+        robot.userData.bodyMat = bodyMat;
+
+        // Round head
+        const headGeo = new THREE.SphereGeometry(0.25, 12, 8);
+        const headMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.y = 1.05;
+        robot.add(head);
+        robot.userData.head = head;
+        robot.userData.headY = 1.05;
+
+        // Eyes
+        const eyeGeo = new THREE.SphereGeometry(0.06, 8, 6);
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
+        const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+        leftEye.position.set(-0.1, 1.08, 0.2);
+        robot.add(leftEye);
+        const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+        rightEye.position.set(0.1, 1.08, 0.2);
+        robot.add(rightEye);
+
+        this.addAntenna(robot, 1.35, 1.48, color);
+        this.addArms(robot, 0.38, 0.5);
+        this.addLegs(robot, 0.15, 0.15);
+    }
+
+    buildTallRobot(robot, color) {
+        // Tall body
+        const bodyGeo = new THREE.BoxGeometry(0.35, 0.9, 0.3);
+        const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.3, metalness: 0.2, flatShading: true });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.y = 0.65;
+        body.castShadow = true;
+        robot.add(body);
+        robot.userData.body = body;
+        robot.userData.bodyMat = bodyMat;
+
+        // Small head
+        const headGeo = new THREE.BoxGeometry(0.3, 0.25, 0.25);
+        const headMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, flatShading: true });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.y = 1.25;
+        robot.add(head);
+        robot.userData.head = head;
+        robot.userData.headY = 1.25;
+
+        // Eyes
+        const eyeGeo = new THREE.BoxGeometry(0.06, 0.08, 0.03);
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
+        const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+        leftEye.position.set(-0.08, 1.27, 0.12);
+        robot.add(leftEye);
+        const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+        rightEye.position.set(0.08, 1.27, 0.12);
+        robot.add(rightEye);
+
+        this.addAntenna(robot, 1.45, 1.58, color);
+        this.addArms(robot, 0.25, 0.6);
+        this.addLegs(robot, 0.1, 0.12);
+    }
+
+    buildChunkyRobot(robot, color) {
+        // Wide body
+        const bodyGeo = new THREE.BoxGeometry(0.7, 0.5, 0.5);
+        const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.3, metalness: 0.2, flatShading: true });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.y = 0.5;
+        body.castShadow = true;
+        robot.add(body);
+        robot.userData.body = body;
+        robot.userData.bodyMat = bodyMat;
+
+        // Wide head
+        const headGeo = new THREE.BoxGeometry(0.55, 0.35, 0.4);
+        const headMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, flatShading: true });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.y = 0.95;
+        robot.add(head);
+        robot.userData.head = head;
+        robot.userData.headY = 0.95;
+
+        // Visor eyes
+        const eyeGeo = new THREE.BoxGeometry(0.35, 0.1, 0.05);
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
+        const visor = new THREE.Mesh(eyeGeo, eyeMat);
+        visor.position.set(0, 0.97, 0.2);
+        robot.add(visor);
+
+        this.addAntenna(robot, 1.2, 1.33, color);
+        this.addArms(robot, 0.45, 0.45);
+        this.addLegs(robot, 0.2, 0.18);
+    }
+
+    buildMiniRobot(robot, color) {
+        // Small round body
+        const bodyGeo = new THREE.SphereGeometry(0.25, 10, 8);
+        const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.3, metalness: 0.2 });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.y = 0.4;
+        body.castShadow = true;
+        robot.add(body);
+        robot.userData.body = body;
+        robot.userData.bodyMat = bodyMat;
+
+        // Big head (proportionally)
+        const headGeo = new THREE.SphereGeometry(0.22, 10, 8);
+        const headMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.y = 0.8;
+        robot.add(head);
+        robot.userData.head = head;
+        robot.userData.headY = 0.8;
+
+        // Big cute eyes
+        const eyeGeo = new THREE.SphereGeometry(0.07, 8, 6);
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
+        const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+        leftEye.position.set(-0.1, 0.82, 0.17);
+        robot.add(leftEye);
+        const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+        rightEye.position.set(0.1, 0.82, 0.17);
+        robot.add(rightEye);
+
+        this.addAntenna(robot, 1.05, 1.18, color);
+        // No arms for mini
+        this.addLegs(robot, 0.1, 0.1);
+    }
+
+    buildAngularRobot(robot, color) {
+        // Angular body (octahedron-ish)
+        const bodyGeo = new THREE.ConeGeometry(0.35, 0.7, 6);
+        const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.3, metalness: 0.3, flatShading: true });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.y = 0.55;
+        body.rotation.y = Math.PI / 6;
+        body.castShadow = true;
+        robot.add(body);
+        robot.userData.body = body;
+        robot.userData.bodyMat = bodyMat;
+
+        // Pyramid head
+        const headGeo = new THREE.ConeGeometry(0.2, 0.35, 4);
+        const headMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, flatShading: true });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.y = 1.1;
+        head.rotation.y = Math.PI / 4;
+        robot.add(head);
+        robot.userData.head = head;
+        robot.userData.headY = 1.1;
+
+        // Single eye
+        const eyeGeo = new THREE.SphereGeometry(0.08, 8, 6);
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const eye = new THREE.Mesh(eyeGeo, eyeMat);
+        eye.position.set(0, 1.0, 0.15);
+        robot.add(eye);
+
+        this.addAntenna(robot, 1.35, 1.48, color);
+        // No arms for angular
+        this.addLegs(robot, 0.15, 0.15);
+    }
+
+    addAntenna(robot, stemY, ballY, color) {
         const antennaGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.2, 6);
-        const antennaMat = new THREE.MeshStandardMaterial({
-            color: 0x666666,
-            metalness: 0.5
-        });
+        const antennaMat = new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.5 });
         const antenna = new THREE.Mesh(antennaGeo, antennaMat);
-        antenna.position.y = 1.35;
+        antenna.position.y = stemY;
         robot.add(antenna);
 
-        // Antenna ball
         const ballGeo = new THREE.SphereGeometry(0.06, 8, 6);
-        const ballMat = new THREE.MeshStandardMaterial({
-            color: color,
-            emissive: color,
-            emissiveIntensity: 0.3
-        });
+        const ballMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.3 });
         const ball = new THREE.Mesh(ballGeo, ballMat);
-        ball.position.y = 1.48;
+        ball.position.y = ballY;
         robot.add(ball);
         robot.userData.antennaBall = ball;
         robot.userData.antennaMat = ballMat;
+    }
 
-        // Arms
+    addArms(robot, offsetX, posY) {
         const armGeo = new THREE.BoxGeometry(0.12, 0.35, 0.12);
-        const armMat = new THREE.MeshStandardMaterial({
-            color: 0xaaaaaa,
-            roughness: 0.4,
-            metalness: 0.3,
-            flatShading: true
-        });
+        const armMat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, roughness: 0.4, metalness: 0.3, flatShading: true });
 
         const leftArm = new THREE.Mesh(armGeo, armMat);
-        leftArm.position.set(-0.35, 0.55, 0);
+        leftArm.position.set(-offsetX, posY, 0);
         leftArm.castShadow = true;
         robot.add(leftArm);
         robot.userData.leftArm = leftArm;
 
         const rightArm = new THREE.Mesh(armGeo, armMat);
-        rightArm.position.set(0.35, 0.55, 0);
+        rightArm.position.set(offsetX, posY, 0);
         rightArm.castShadow = true;
         robot.add(rightArm);
         robot.userData.rightArm = rightArm;
+    }
 
-        // Legs
+    addLegs(robot, offsetX, posY) {
         const legGeo = new THREE.BoxGeometry(0.15, 0.25, 0.15);
-        const legMat = new THREE.MeshStandardMaterial({
-            color: 0x666666,
-            roughness: 0.5,
-            metalness: 0.2,
-            flatShading: true
-        });
+        const legMat = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.5, metalness: 0.2, flatShading: true });
 
         const leftLeg = new THREE.Mesh(legGeo, legMat);
-        leftLeg.position.set(-0.13, 0.2, 0);
+        leftLeg.position.set(-offsetX, posY, 0);
         leftLeg.castShadow = true;
         robot.add(leftLeg);
 
         const rightLeg = new THREE.Mesh(legGeo, legMat);
-        rightLeg.position.set(0.13, 0.2, 0);
+        rightLeg.position.set(offsetX, posY, 0);
         rightLeg.castShadow = true;
         robot.add(rightLeg);
+    }
 
-        robot.userData.sessionId = session.id;
-        robot.userData.session = session;
-        robot.userData.status = status;
-        robot.userData.animTime = Math.random() * Math.PI * 2; // Random phase
+    addRobotAccessory(robot, accessory) {
+        const headY = robot.userData.headY || 1.1;
 
-        // Status indicator above head
-        this.createStatusIndicator(robot, status);
+        switch (accessory) {
+            case 'hat':
+                const hatGeo = new THREE.CylinderGeometry(0.15, 0.2, 0.2, 8);
+                const hatMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 });
+                const hat = new THREE.Mesh(hatGeo, hatMat);
+                hat.position.y = headY + 0.25;
+                robot.add(hat);
+                robot.userData.accessoryMesh = hat;
+                break;
 
-        return robot;
+            case 'glasses':
+                const glassesMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.8 });
+                const lensGeo = new THREE.TorusGeometry(0.08, 0.015, 8, 16);
+                const leftLens = new THREE.Mesh(lensGeo, glassesMat);
+                leftLens.position.set(-0.1, headY, 0.2);
+                leftLens.rotation.y = Math.PI / 2;
+                robot.add(leftLens);
+                const rightLens = new THREE.Mesh(lensGeo, glassesMat);
+                rightLens.position.set(0.1, headY, 0.2);
+                rightLens.rotation.y = Math.PI / 2;
+                robot.add(rightLens);
+                const bridgeGeo = new THREE.BoxGeometry(0.08, 0.02, 0.02);
+                const bridge = new THREE.Mesh(bridgeGeo, glassesMat);
+                bridge.position.set(0, headY, 0.2);
+                robot.add(bridge);
+                break;
+
+            case 'bowtie':
+                const bowMat = new THREE.MeshStandardMaterial({ color: 0xff0000, roughness: 0.5 });
+                const bow1 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.03), bowMat);
+                bow1.position.set(-0.06, 0.85, 0.22);
+                bow1.rotation.z = 0.3;
+                robot.add(bow1);
+                const bow2 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.03), bowMat);
+                bow2.position.set(0.06, 0.85, 0.22);
+                bow2.rotation.z = -0.3;
+                robot.add(bow2);
+                const knot = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.05, 0.04), bowMat);
+                knot.position.set(0, 0.85, 0.22);
+                robot.add(knot);
+                break;
+
+            case 'antenna':
+                // Extra antenna
+                const ant2Geo = new THREE.CylinderGeometry(0.015, 0.015, 0.25, 6);
+                const ant2Mat = new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.5 });
+                const ant2 = new THREE.Mesh(ant2Geo, ant2Mat);
+                ant2.position.set(0.15, headY + 0.2, 0);
+                ant2.rotation.z = 0.3;
+                robot.add(ant2);
+                const ball2Geo = new THREE.SphereGeometry(0.04, 6, 4);
+                const ball2Mat = new THREE.MeshStandardMaterial({ color: 0x00ff00, emissive: 0x00ff00, emissiveIntensity: 0.5 });
+                const ball2 = new THREE.Mesh(ball2Geo, ball2Mat);
+                ball2.position.set(0.22, headY + 0.38, 0);
+                robot.add(ball2);
+                break;
+        }
+    }
+
+    updateRobotCustomization(sessionId, customization) {
+        const robot = this.robots.get(sessionId);
+        if (!robot) return;
+
+        // Get current position
+        const pos = robot.position.clone();
+        const session = robot.userData.session;
+
+        // Update session data
+        session.robot_model = customization.model;
+        session.robot_color = customization.color;
+        session.robot_accessory = customization.accessory;
+
+        // Remove old robot
+        this.scene.remove(robot);
+
+        // Create new robot with updated customization
+        const newRobot = this.createRobot(session);
+        newRobot.position.copy(pos);
+        this.scene.add(newRobot);
+        this.robots.set(sessionId, newRobot);
     }
 
     createStatusIndicator(robot, status) {
@@ -564,14 +837,17 @@ class World3D {
     }
 
     updateRobotStatus(robot, status) {
-        const color = this.statusColors[status] || this.statusColors.idle;
+        const statusColor = this.statusColors[status] || this.statusColors.idle;
 
-        // Update body color
-        robot.userData.bodyMat.color.setHex(color);
+        // Only update body color if no custom color is set
+        if (!robot.userData.customColor) {
+            robot.userData.bodyMat.color.setHex(statusColor);
+        }
 
-        // Update antenna ball
-        robot.userData.antennaMat.color.setHex(color);
-        robot.userData.antennaMat.emissive.setHex(color);
+        // Antenna always uses status color (or custom color if set)
+        const antennaColor = robot.userData.customColor || statusColor;
+        robot.userData.antennaMat.color.setHex(antennaColor);
+        robot.userData.antennaMat.emissive.setHex(antennaColor);
 
         robot.userData.status = status;
 
@@ -776,10 +1052,16 @@ class World3D {
         this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         window.addEventListener('resize', () => this.onResize());
 
-        // Control key shows/hides labels
+        // Command key (Meta) shows/hides labels
+        // Space resets camera view
+        // Only when 3D view is active and no modal is open
         this.labelsVisible = false;
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Control' && !this.labelsVisible) {
+            // Skip if modal is open (user is typing in terminal)
+            const modalOpen = !document.getElementById('modal').classList.contains('hidden');
+            if (modalOpen) return;
+
+            if (e.key === 'Meta' && !this.labelsVisible) {
                 this.labelsVisible = true;
                 this.setLabelsVisible(true);
             }
@@ -789,7 +1071,11 @@ class World3D {
             }
         });
         document.addEventListener('keyup', (e) => {
-            if (e.key === 'Control') {
+            // Skip if modal is open
+            const modalOpen = !document.getElementById('modal').classList.contains('hidden');
+            if (modalOpen) return;
+
+            if (e.key === 'Meta') {
                 this.labelsVisible = false;
                 this.setLabelsVisible(false);
             }
@@ -806,9 +1092,9 @@ class World3D {
     }
 
     resetCameraView() {
-        // Frontal, slightly elevated view
-        this.camera.position.set(0, 8, 12);
-        this.controls.target.set(0, 0, 0);
+        // Frontal, slightly elevated view - centered on the world
+        this.camera.position.set(0, 10, 14);
+        this.controls.target.set(0, 0.5, 0);
         this.controls.update();
         this.saveCameraPosition();
     }
@@ -929,8 +1215,12 @@ class World3D {
             }
         }
 
-        // Tooltip
+        // Tooltip - don't show if radial menu is active
         const tooltip = document.getElementById('session-tooltip');
+        if (this.radialMenu.classList.contains('active')) {
+            if (tooltip) tooltip.classList.add('hidden');
+            return;
+        }
 
         // Check if hovering a robot
         const allRobotMeshes = [];
@@ -1141,6 +1431,33 @@ class World3D {
         this.radialSessionId = sessionId;
         this.radialMenu.style.left = x + 'px';
         this.radialMenu.style.top = y + 'px';
+
+        // Hide the hover tooltip
+        const tooltip = document.getElementById('session-tooltip');
+        if (tooltip) tooltip.classList.add('hidden');
+
+        // Populate session info
+        const robot = this.robots.get(sessionId);
+        if (robot && robot.userData.session) {
+            const session = robot.userData.session;
+            const statusLabels = {
+                idle: 'Idle',
+                thinking: 'Thinking',
+                executing: 'Executing',
+                waiting_input: 'Waiting',
+                stopped: 'Stopped',
+                shell: 'Shell'
+            };
+            const status = statusLabels[session.status] || session.status;
+            const lastActive = session.last_input_at || session.updated_at;
+            const timeAgo = lastActive ? this.formatTimeAgo(lastActive) : 'Never';
+
+            const nameEl = this.radialMenu.querySelector('.radial-info-name');
+            const detailsEl = this.radialMenu.querySelector('.radial-info-details');
+            if (nameEl) nameEl.textContent = session.name || session.id;
+            if (detailsEl) detailsEl.textContent = `${status} · ${timeAgo}`;
+        }
+
         this.radialMenu.classList.add('active');
     }
 
@@ -1169,21 +1486,9 @@ class World3D {
         }
     }
 
-    // Pending session setup
+    // Pending session setup (no longer used - sessions create directly)
     setupPendingSession() {
-        const confirmBtn = document.getElementById('pending-confirm');
-        const cancelBtn = document.getElementById('pending-cancel');
-
-        confirmBtn.addEventListener('click', () => {
-            if (this.pendingSession && this.onCreateSession) {
-                this.onCreateSession(this.pendingSession.q, this.pendingSession.r);
-            }
-            this.cancelPendingSession();
-        });
-
-        cancelBtn.addEventListener('click', () => {
-            this.cancelPendingSession();
-        });
+        // No-op: pending session UI was removed
     }
 
     createPendingSession(q, r) {
@@ -1260,27 +1565,7 @@ class World3D {
     }
 
     updatePendingButtons() {
-        if (!this.pendingSession) return;
-
-        const confirmBtn = document.getElementById('pending-confirm');
-        const cancelBtn = document.getElementById('pending-cancel');
-
-        // Project 3D position to screen
-        const pos = new THREE.Vector3();
-        this.pendingSession.group.getWorldPosition(pos);
-        pos.y += 2;
-
-        const projected = pos.project(this.camera);
-        const x = (projected.x * 0.5 + 0.5) * this.canvas.clientWidth;
-        const y = (-projected.y * 0.5 + 0.5) * this.canvas.clientHeight + 60; // +60 for header
-
-        confirmBtn.style.left = x + 'px';
-        confirmBtn.style.top = (y - 20) + 'px';
-        confirmBtn.classList.remove('hidden');
-
-        cancelBtn.style.left = x + 'px';
-        cancelBtn.style.top = (y + 25) + 'px';
-        cancelBtn.classList.remove('hidden');
+        // No-op: pending session UI was removed
     }
 
     cancelPendingSession() {
@@ -1288,9 +1573,6 @@ class World3D {
             this.scene.remove(this.pendingSession.group);
             this.pendingSession = null;
         }
-
-        document.getElementById('pending-confirm').classList.add('hidden');
-        document.getElementById('pending-cancel').classList.add('hidden');
     }
 
     saveCameraPosition() {
