@@ -757,18 +757,17 @@ class World3D {
         this.mouseDownTime = 0;
         this.mouseDownPos = { x: 0, y: 0 };
 
-        // Track clicks using document-level events to avoid OrbitControls interference
-        document.addEventListener('pointerdown', (e) => {
-            if (e.target === this.canvas) {
-                this.mouseDownTime = Date.now();
-                this.mouseDownPos = { x: e.clientX, y: e.clientY };
-                this.hideRadialMenu();
-            }
+        // Track clicks - attach to controls events
+        this.controls.addEventListener('start', () => {
+            this.mouseDownTime = Date.now();
+            this.hideRadialMenu();
         });
 
-        document.addEventListener('pointerup', (e) => {
-            if (e.target === this.canvas) {
-                this.onMouseUp(e);
+        this.canvas.addEventListener('click', (e) => {
+            const elapsed = Date.now() - this.mouseDownTime;
+            if (elapsed < 300) {
+                e.stopPropagation();
+                this.onCanvasClick(e);
             }
         });
 
@@ -777,18 +776,7 @@ class World3D {
         window.addEventListener('resize', () => this.onResize());
     }
 
-    onMouseUp(event) {
-        // Check if this was a click (short duration, small movement) or a drag
-        const elapsed = Date.now() - this.mouseDownTime;
-        const dx = event.clientX - this.mouseDownPos.x;
-        const dy = event.clientY - this.mouseDownPos.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
-        // If dragging (long press or moved too much), don't trigger click
-        if (elapsed > 250 || distance > 10) {
-            return;
-        }
-
+    onCanvasClick(event) {
         const rect = this.canvas.getBoundingClientRect();
         this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
