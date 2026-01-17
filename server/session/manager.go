@@ -198,8 +198,11 @@ func (m *Manager) loadSessions() {
 		session.UpdatedAt = updatedAt
 		session.LastInputAt = lastInputAt
 
-		// Note: scrollback is now loaded on-demand when session is opened
-		// We don't preload it to keep memory usage low
+		// Load scrollback from disk
+		scrollbackPath := filepath.Join(m.storageDir, info.ID+".scrollback")
+		if scrollbackData, err := os.ReadFile(scrollbackPath); err == nil {
+			session.SetSavedScrollback(scrollbackData)
+		}
 
 		m.sessions[session.ID] = session
 	}

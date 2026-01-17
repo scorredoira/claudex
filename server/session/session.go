@@ -103,6 +103,7 @@ type Session struct {
 	panes          map[string]*Pane
 	mu             sync.RWMutex
 	onStatusChange func(Status)
+	savedScrollback []byte // Scrollback loaded from disk (before pane exists)
 }
 
 // NewSession creates a new session with default values
@@ -460,13 +461,26 @@ func (s *Session) SetMetadata(key string, value any) {
 	s.UpdatedAt = time.Now()
 }
 
-// GetScrollback returns the terminal scrollback buffer from main pane
+// GetScrollback returns the terminal scrollback buffer from main pane or saved scrollback
 func (s *Session) GetScrollback() []byte {
 	pane := s.GetMainPane()
-	if pane == nil {
-		return nil
+	if pane != nil {
+		scrollback := pane.GetScrollback()
+		if len(scrollback) > 0 {
+			return scrollback
+		}
 	}
-	return pane.GetScrollback()
+	// Return saved scrollback if no pane or pane has no scrollback
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.savedScrollback
+}
+
+// SetSavedScrollback sets the scrollback loaded from disk
+func (s *Session) SetSavedScrollback(data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.savedScrollback = data
 }
 
 // GetProcessCwd returns the current working directory of the shell process
