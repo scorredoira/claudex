@@ -757,13 +757,21 @@ class World3D {
         this.mouseDownTime = 0;
         this.mouseDownPos = { x: 0, y: 0 };
 
-        this.canvas.addEventListener('mousedown', (e) => {
-            this.mouseDownTime = Date.now();
-            this.mouseDownPos = { x: e.clientX, y: e.clientY };
-            this.hideRadialMenu();
+        // Track clicks using document-level events to avoid OrbitControls interference
+        document.addEventListener('pointerdown', (e) => {
+            if (e.target === this.canvas) {
+                this.mouseDownTime = Date.now();
+                this.mouseDownPos = { x: e.clientX, y: e.clientY };
+                this.hideRadialMenu();
+            }
         });
 
-        this.canvas.addEventListener('mouseup', (e) => this.onMouseUp(e));
+        document.addEventListener('pointerup', (e) => {
+            if (e.target === this.canvas) {
+                this.onMouseUp(e);
+            }
+        });
+
         this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
         this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         window.addEventListener('resize', () => this.onResize());
@@ -787,7 +795,7 @@ class World3D {
 
         this.raycaster.setFromCamera(this.mouse, this.camera);
 
-        // Check robots - show radial menu
+        // Check robots - show radial menu on left click
         const robotMeshes = [];
         this.robots.forEach(robot => {
             robot.traverse(child => {
@@ -807,7 +815,7 @@ class World3D {
             }
         }
 
-        // Check parcels - show radial menu
+        // Check parcels - show radial menu on left click
         const parcelMeshes = Array.from(this.parcels.values());
         intersects = this.raycaster.intersectObjects(parcelMeshes, true);
         if (intersects.length > 0) {
