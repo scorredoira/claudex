@@ -737,17 +737,23 @@ class Claudex {
             if (e.target.id === 'modal') this.closeModal();
         };
 
-        // Escape to close
+        // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                const dialog = document.getElementById('new-session-dialog');
-                const modal = document.getElementById('modal');
+            const dialog = document.getElementById('new-session-dialog');
+            const modal = document.getElementById('modal');
 
+            // Escape closes dialogs
+            if (e.key === 'Escape') {
                 if (!dialog.classList.contains('hidden')) {
                     dialog.classList.add('hidden');
-                } else if (!modal.classList.contains('hidden')) {
-                    // Don't close modal on Escape - let it go to the terminal
-                    // The terminal might need Escape for Claude Code
+                }
+            }
+
+            // Cmd+Escape (Mac) or Ctrl+Escape (Win/Linux) closes session modal
+            if (e.key === 'Escape' && (e.metaKey || e.ctrlKey)) {
+                if (!modal.classList.contains('hidden')) {
+                    e.preventDefault();
+                    this.closeModal();
                 }
             }
         });

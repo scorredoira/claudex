@@ -289,10 +289,7 @@ header h1 {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.8);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    background: var(--bg-secondary);
     z-index: 1000;
 }
 
@@ -306,9 +303,8 @@ header h1 {
 
 .modal-content {
     background: var(--bg-secondary);
-    border-radius: var(--border-radius);
-    width: 90vw;
-    height: 85vh;
+    width: 100%;
+    height: 100%;
     display: flex;
     flex-direction: column;
     overflow: hidden;
