@@ -1099,7 +1099,10 @@ class World3D {
         });
 
         this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
-        this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+        this.canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            this.onCanvasRightClick(e);
+        });
         window.addEventListener('resize', () => this.onResize());
 
         // Command key (Meta) shows/hides labels
@@ -1187,7 +1190,60 @@ class World3D {
 
         this.raycaster.setFromCamera(this.mouse, this.camera);
 
-        // Check robots - show radial menu on left click
+        // Check robots - open session directly on left click
+        const robotMeshes = [];
+        this.robots.forEach(robot => {
+            robot.traverse(child => {
+                if (child.isMesh) robotMeshes.push(child);
+            });
+        });
+
+        let intersects = this.raycaster.intersectObjects(robotMeshes, false);
+        if (intersects.length > 0) {
+            let obj = intersects[0].object;
+            while (obj.parent && !obj.userData.sessionId) {
+                obj = obj.parent;
+            }
+            if (obj.userData.sessionId && this.onSessionClick) {
+                this.onSessionClick(obj.userData.sessionId);
+                return;
+            }
+        }
+
+        // Check parcels - open session directly on left click
+        const parcelMeshes = Array.from(this.parcels.values());
+        intersects = this.raycaster.intersectObjects(parcelMeshes, true);
+        if (intersects.length > 0) {
+            let obj = intersects[0].object;
+            while (obj.parent && !obj.userData.sessionId) {
+                obj = obj.parent;
+            }
+            if (obj.userData.sessionId && this.onSessionClick) {
+                this.onSessionClick(obj.userData.sessionId);
+                return;
+            }
+        }
+
+        // Check empty parcels - create session directly
+        const emptyMeshes = Array.from(this.emptyParcels.values());
+        intersects = this.raycaster.intersectObjects(emptyMeshes, false);
+        if (intersects.length > 0) {
+            const parcel = intersects[0].object;
+            if (parcel.userData.isEmpty && this.onCreateSession) {
+                const { q, r } = parcel.userData;
+                this.onCreateSession(q, r);
+            }
+        }
+    }
+
+    onCanvasRightClick(event) {
+        const rect = this.canvas.getBoundingClientRect();
+        this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+        this.raycaster.setFromCamera(this.mouse, this.camera);
+
+        // Check robots - show radial menu on right click
         const robotMeshes = [];
         this.robots.forEach(robot => {
             robot.traverse(child => {
@@ -1207,7 +1263,7 @@ class World3D {
             }
         }
 
-        // Check parcels - show radial menu on left click
+        // Check parcels - show radial menu on right click
         const parcelMeshes = Array.from(this.parcels.values());
         intersects = this.raycaster.intersectObjects(parcelMeshes, true);
         if (intersects.length > 0) {
@@ -1218,17 +1274,6 @@ class World3D {
             if (obj.userData.sessionId) {
                 this.showRadialMenu(event.clientX, event.clientY, obj.userData.sessionId);
                 return;
-            }
-        }
-
-        // Check empty parcels - create session directly
-        const emptyMeshes = Array.from(this.emptyParcels.values());
-        intersects = this.raycaster.intersectObjects(emptyMeshes, false);
-        if (intersects.length > 0) {
-            const parcel = intersects[0].object;
-            if (parcel.userData.isEmpty && this.onCreateSession) {
-                const { q, r } = parcel.userData;
-                this.onCreateSession(q, r);
             }
         }
     }
@@ -1593,14 +1638,6 @@ class World3D {
             }
         });
 
-        // Handle center button click (open session)
-        const center = this.radialMenu.querySelector('.radial-menu-center');
-        center.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.handleRadialAction('open', this.radialSessionId);
-            this.hideRadialMenu();
-        });
-
         // Handle radial menu actions
         this.radialMenu.querySelectorAll('.radial-item').forEach(item => {
             item.addEventListener('click', (e) => {
@@ -1653,9 +1690,6 @@ class World3D {
 
     handleRadialAction(action, sessionId) {
         switch (action) {
-            case 'open':
-                if (this.onSessionClick) this.onSessionClick(sessionId);
-                break;
             case 'delete':
                 if (this.onDeleteSession) this.onDeleteSession(sessionId);
                 break;
