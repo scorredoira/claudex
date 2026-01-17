@@ -82,15 +82,15 @@ class Claudex {
     handleMessage(msg) {
         switch (msg.type) {
             case 'output':
-                this.handleOutput(msg.session_id, msg.data);
+                this.handleOutput(msg.session_id, msg.data, msg.pane_id);
                 break;
             case 'status':
-                this.handleStatus(msg.session_id, msg.status);
+                this.handleStatus(msg.session_id, msg.status, msg.pane_id);
                 break;
         }
     }
 
-    handleOutput(sessionId, data) {
+    handleOutput(sessionId, data, paneId) {
         // Decode Base64 data to Uint8Array, then to UTF-8 string
         const binaryString = atob(data);
         const bytes = new Uint8Array(binaryString.length);
@@ -99,23 +99,31 @@ class Claudex {
         }
         const decoded = new TextDecoder('utf-8').decode(bytes);
 
-        // Write to all panes of this session (they share the same PTY for now)
-        if (this.activeSessionId === sessionId) {
+        if (this.activeSessionId !== sessionId) return;
+
+        // Route to specific pane if pane_id provided
+        if (paneId) {
+            const pane = this.panes.get(paneId);
+            if (pane) {
+                pane.terminal.write(decoded);
+                if (this.scrollToBottomPending) {
+                    setTimeout(() => pane.terminal.scrollToBottom(), 50);
+                }
+            }
+        } else {
+            // Legacy: write to all panes (for backward compatibility)
             this.panes.forEach(pane => {
                 pane.terminal.write(decoded);
             });
+        }
 
-            // Scroll to bottom after scrollback is written
-            if (this.scrollToBottomPending) {
-                this.scrollToBottomPending = false;
-                [50, 200, 500].forEach(delay => {
-                    setTimeout(() => {
-                        this.panes.forEach(pane => {
-                            pane.terminal.scrollToBottom();
-                        });
-                    }, delay);
-                });
-            }
+        if (this.scrollToBottomPending) {
+            this.scrollToBottomPending = false;
+            [50, 200, 500].forEach(delay => {
+                setTimeout(() => {
+                    this.panes.forEach(pane => pane.terminal.scrollToBottom());
+                }, delay);
+            });
         }
     }
 
@@ -557,20 +565,16 @@ class Claudex {
             session_id: sessionId
         }));
 
-        // Start session if needed
+        // Start first pane on backend
         const firstPane = this.panes.values().next().value;
-        if ((session.status === 'idle' || !session.status) && firstPane) {
-            this.ws.send(JSON.stringify({
-                type: 'start',
-                session_id: sessionId,
-                data: { rows: firstPane.terminal.rows, cols: firstPane.terminal.cols }
-            }));
+        if (firstPane) {
+            this.sendStartPane(sessionId, firstPane.paneId, firstPane.terminal.rows, firstPane.terminal.cols);
         }
 
         this.scrollToBottomPending = true;
     }
 
-    createPane(sessionId) {
+    createPane(sessionId, isFirstPane = true) {
         const paneId = `pane-${++this.paneCounter}`;
         const panesContainer = document.getElementById('modal-panes');
 
@@ -616,16 +620,16 @@ class Claudex {
         terminal.open(termContainer);
         fitAddon.fit();
 
-        // Input handling
+        // Input handling - route to specific pane
         terminal.onData(data => {
-            this.sendInput(sessionId, data);
+            this.sendInput(sessionId, data, paneId);
         });
 
         // Custom key handlers
         terminal.attachCustomKeyEventHandler((event) => {
             if (event.type === 'keydown') {
                 if (event.key === 'Enter' && event.shiftKey) {
-                    this.sendInput(sessionId, '\x1b[13;2u');
+                    this.sendInput(sessionId, '\x1b[13;2u', paneId);
                     return false;
                 }
                 if (event.key === 'Escape' && event.shiftKey) {
@@ -660,7 +664,7 @@ class Claudex {
             clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(() => {
                 pane.fitAddon.fit();
-                this.sendResize(sessionId, pane.terminal.rows, pane.terminal.cols);
+                this.sendResize(sessionId, pane.terminal.rows, pane.terminal.cols, pane.paneId);
             }, 100);
         });
         observer.observe(pane.element);
@@ -691,7 +695,12 @@ class Claudex {
         const pane = this.panes.get(paneId);
         if (!pane) return;
 
-        // Cleanup
+        // Stop pane on backend
+        if (this.activeSessionId) {
+            this.sendStopPane(this.activeSessionId, paneId);
+        }
+
+        // Cleanup UI
         if (pane.resizeObserver) pane.resizeObserver.disconnect();
         pane.terminal.dispose();
         pane.element.remove();
@@ -717,13 +726,15 @@ class Claudex {
         if (!this.activeSessionId) return;
 
         const sessionId = this.activeSessionId;
-        const panesContainer = document.getElementById('modal-panes');
 
-        // Create new pane
-        const newPane = this.createPane(sessionId);
+        // Create new pane (UI only)
+        const newPane = this.createPane(sessionId, false); // false = don't start yet
 
         // Rebuild split layout
         this.rebuildSplit(direction);
+
+        // Start the pane on the backend
+        this.sendStartPane(sessionId, newPane.paneId, newPane.terminal.rows, newPane.terminal.cols);
 
         // Focus new pane
         this.setActivePane(newPane.paneId);
@@ -817,23 +828,48 @@ class Claudex {
         }
     }
 
-    sendInput(sessionId, data) {
+    sendInput(sessionId, data, paneId) {
         if (this.ws.readyState !== WebSocket.OPEN) return;
 
-        this.ws.send(JSON.stringify({
+        const msg = {
             type: 'input',
             session_id: sessionId,
             data: data
-        }));
+        };
+        if (paneId) msg.pane_id = paneId;
+        this.ws.send(JSON.stringify(msg));
     }
 
-    sendResize(sessionId, rows, cols) {
+    sendResize(sessionId, rows, cols, paneId) {
         if (this.ws.readyState !== WebSocket.OPEN) return;
 
-        this.ws.send(JSON.stringify({
+        const msg = {
             type: 'resize',
             session_id: sessionId,
             data: { rows, cols }
+        };
+        if (paneId) msg.pane_id = paneId;
+        this.ws.send(JSON.stringify(msg));
+    }
+
+    sendStartPane(sessionId, paneId, rows, cols) {
+        if (this.ws.readyState !== WebSocket.OPEN) return;
+
+        this.ws.send(JSON.stringify({
+            type: 'start_pane',
+            session_id: sessionId,
+            pane_id: paneId,
+            data: { rows, cols }
+        }));
+    }
+
+    sendStopPane(sessionId, paneId) {
+        if (this.ws.readyState !== WebSocket.OPEN) return;
+
+        this.ws.send(JSON.stringify({
+            type: 'stop_pane',
+            session_id: sessionId,
+            pane_id: paneId
         }));
     }
 
