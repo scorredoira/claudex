@@ -297,7 +297,10 @@ header h1 {
     left: 0;
     right: 0;
     bottom: 0;
-    background: var(--bg-secondary);
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
     z-index: 1000;
 }
 
@@ -311,11 +314,23 @@ header h1 {
 
 .modal-content {
     background: var(--bg-secondary);
-    width: 100%;
-    height: 100%;
+    border-radius: var(--border-radius);
+    width: 90vw;
+    height: 85vh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+}
+
+/* Fullscreen modal (session terminal) */
+.modal.fullscreen {
+    background: var(--bg-secondary);
+}
+
+.modal.fullscreen .modal-content {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
 }
 
 .modal-header {
