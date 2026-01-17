@@ -69,11 +69,14 @@ class Claudex {
             // Scroll to bottom after scrollback is written
             if (this.scrollToBottomPending) {
                 this.scrollToBottomPending = false;
-                setTimeout(() => {
-                    if (this.modalTerminal) {
-                        this.modalTerminal.scrollToBottom();
-                    }
-                }, 50);
+                // Multiple attempts to ensure scroll works after large data loads
+                [50, 200, 500].forEach(delay => {
+                    setTimeout(() => {
+                        if (this.modalTerminal) {
+                            this.modalTerminal.scrollToBottom();
+                        }
+                    }, delay);
+                });
             }
         }
     }
@@ -438,6 +441,11 @@ class Claudex {
                     titleEl.textContent = newName;
                 }
             }
+
+            // Update 3D world label
+            if (this.world3d) {
+                this.world3d.updateSessionName(sessionId, newName);
+            }
         } catch (err) {
             console.error('Failed to update session name:', err);
         }
@@ -461,6 +469,12 @@ class Claudex {
         };
         titleInput.onkeypress = (e) => e.stopPropagation();
         titleInput.onkeyup = (e) => e.stopPropagation();
+        titleInput.onblur = () => {
+            // Refocus terminal when title input loses focus
+            if (this.modalTerminal) {
+                this.modalTerminal.focus();
+            }
+        };
 
         const modalBadge = document.getElementById('modal-status');
         modalBadge.textContent = (session.status || 'idle').replace('_', ' ');
@@ -510,6 +524,13 @@ class Claudex {
         this.modalTerminal.onData(data => {
             this.sendInput(sessionId, data);
         });
+
+        // Click on terminal container refocuses terminal
+        container.onclick = () => {
+            if (this.modalTerminal) {
+                this.modalTerminal.focus();
+            }
+        };
 
         // Handle resize with debounce
         let resizeTimeout;
@@ -781,7 +802,8 @@ class Claudex {
 
     restore3DViewPreference() {
         const saved = localStorage.getItem('view3d');
-        if (saved === 'true') {
+        // Default to 3D view (true) unless explicitly set to false
+        if (saved !== 'false') {
             this.toggle3DView();
         }
     }

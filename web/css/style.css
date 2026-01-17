@@ -333,6 +333,11 @@ header h1 {
     outline: none;
     flex: 1;
     min-width: 0;
+    cursor: default;
+}
+
+#modal-title:focus {
+    cursor: text;
 }
 
 #modal-title:hover {

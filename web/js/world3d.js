@@ -232,6 +232,15 @@ class World3D {
         edge.scale.set(0.95, 0.95, 1);
         group.add(edge);
 
+        // Name label on the tile
+        if (session) {
+            const label = this.createTileLabel(session.name || session.id);
+            label.position.y = this.hexHeight + 0.01;
+            label.rotation.x = -Math.PI / 2;
+            group.add(label);
+            group.userData.label = label;
+        }
+
         // Position in hex grid
         const pos = this.hexToWorld(q, r);
         group.position.set(pos.x, 0, pos.z);
@@ -239,6 +248,70 @@ class World3D {
         group.userData = { q, r, sessionId: session?.id, type: 'parcel' };
 
         return group;
+    }
+
+    createTileLabel(text) {
+        const canvas = document.createElement('canvas');
+        const size = 256;
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+
+        // Truncate text if too long
+        let displayText = text;
+        if (displayText.length > 12) {
+            displayText = displayText.substring(0, 11) + '…';
+        }
+
+        // Draw text
+        ctx.font = 'bold 32px Arial, sans-serif';
+        ctx.fillStyle = '#2a4a20';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(displayText, size / 2, size / 2);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.needsUpdate = true;
+
+        const material = new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            depthWrite: false
+        });
+
+        const planeGeo = new THREE.PlaneGeometry(this.hexSize * 1.6, this.hexSize * 1.6);
+        const mesh = new THREE.Mesh(planeGeo, material);
+
+        mesh.userData.canvas = canvas;
+        mesh.userData.ctx = ctx;
+        mesh.userData.texture = texture;
+
+        return mesh;
+    }
+
+    updateTileLabel(parcel, text) {
+        const label = parcel.userData.label;
+        if (!label) return;
+
+        const ctx = label.userData.ctx;
+        const canvas = label.userData.canvas;
+        const size = canvas.width;
+
+        // Truncate text if too long
+        let displayText = text;
+        if (displayText.length > 12) {
+            displayText = displayText.substring(0, 11) + '…';
+        }
+
+        // Clear and redraw
+        ctx.clearRect(0, 0, size, size);
+        ctx.font = 'bold 32px Arial, sans-serif';
+        ctx.fillStyle = '#2a4a20';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(displayText, size / 2, size / 2);
+
+        label.userData.texture.needsUpdate = true;
     }
 
     createEmptyParcel(q, r) {
@@ -642,14 +715,43 @@ class World3D {
         }
     }
 
+    updateSessionName(sessionId, name) {
+        // Find parcel with this session
+        this.parcels.forEach(parcel => {
+            if (parcel.userData.sessionId === sessionId) {
+                this.updateTileLabel(parcel, name);
+            }
+        });
+    }
+
     // Event handling
     setupEventListeners() {
-        this.canvas.addEventListener('click', (e) => this.onClick(e));
+        // Track mousedown for click vs drag detection
+        this.mouseDownTime = 0;
+        this.mouseDownPos = { x: 0, y: 0 };
+
+        this.canvas.addEventListener('mousedown', (e) => {
+            this.mouseDownTime = Date.now();
+            this.mouseDownPos = { x: e.clientX, y: e.clientY };
+        });
+
+        this.canvas.addEventListener('mouseup', (e) => this.onMouseUp(e));
         this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
         window.addEventListener('resize', () => this.onResize());
     }
 
-    onClick(event) {
+    onMouseUp(event) {
+        // Check if this was a click (short duration, small movement) or a drag
+        const elapsed = Date.now() - this.mouseDownTime;
+        const dx = event.clientX - this.mouseDownPos.x;
+        const dy = event.clientY - this.mouseDownPos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        // If dragging (long press or moved too much), don't trigger click
+        if (elapsed > 250 || distance > 10) {
+            return;
+        }
+
         const rect = this.canvas.getBoundingClientRect();
         this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;

@@ -332,11 +332,11 @@ func (s *Session) readOutput(onOutput func([]byte)) {
 				if len(data) > 0 {
 					log.Printf("[Session %s] Sending %d bytes", s.ID, len(data))
 
-					// Save to scrollback buffer (keep last 64KB)
+					// Save to scrollback buffer (keep last 1MB)
 					s.mu.Lock()
 					s.scrollback = append(s.scrollback, data...)
-					if len(s.scrollback) > 64*1024 {
-						s.scrollback = s.scrollback[len(s.scrollback)-64*1024:]
+					if len(s.scrollback) > 1024*1024 {
+						s.scrollback = s.scrollback[len(s.scrollback)-1024*1024:]
 					}
 					s.mu.Unlock()
 					s.detectStatus(data)

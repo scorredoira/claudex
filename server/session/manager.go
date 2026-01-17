@@ -174,6 +174,7 @@ func (m *Manager) loadSessions() {
 			CreatedAt:    createdAt,
 			UpdatedAt:    updatedAt,
 			done:         make(chan struct{}),
+			tracker:      newStateTracker(),
 		}
 
 		// Load scrollback if exists
