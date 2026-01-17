@@ -24,6 +24,46 @@ const (
 	StatusStopped      Status = "stopped"       // Session terminated
 )
 
+// StateTracker provides temporal and contextual state detection
+type StateTracker struct {
+	lastInputTime    time.Time     // When user last sent input
+	lastOutputTime   time.Time     // When we last received output
+	stateChangedAt   time.Time     // When state last changed
+	confidence       float64       // Confidence in current state (0.0 - 1.0)
+
+	// I/O rate tracking
+	outputBytes      int64         // Bytes received in current window
+	outputWindowStart time.Time    // Start of measurement window
+	outputRate       float64       // Bytes per second
+
+	// Multi-line context buffer
+	lines            []LineEntry   // Circular buffer of recent lines
+	maxLines         int           // Max lines to keep (default 50)
+
+	// Claude session detection
+	claudeActive     bool          // Whether we think Claude is running
+	claudeStartedAt  time.Time     // When Claude was detected as started
+}
+
+// LineEntry represents a line with its timestamp
+type LineEntry struct {
+	Content   string
+	Timestamp time.Time
+	HasSpinner bool
+	HasToolPattern bool
+	HasClaudeUI bool
+	HasShellPrompt bool
+}
+
+// Timeout configuration
+const (
+	ThinkingTimeout     = 60 * time.Second  // Max time in thinking before assuming waiting
+	ExecutingTimeout    = 5 * time.Minute   // Max time executing a tool
+	NoOutputTimeout     = 30 * time.Second  // No output = probably waiting for input
+	InputToThinkingDelay = 500 * time.Millisecond // After input, wait before assuming thinking
+	IOWindowDuration    = 2 * time.Second   // Window for I/O rate calculation
+)
+
 // Position3D represents coordinates in the 3D hex world (Phase 2)
 type Position3D struct {
 	Q     int     `json:"q"`     // Hex coordinate Q
@@ -47,27 +87,51 @@ type Session struct {
 	Branch       string            `json:"branch,omitempty"`         // Git branch name
 
 	// Internal fields (not serialized)
-	cmd       *exec.Cmd
-	pty       *os.File
-	mu        sync.RWMutex
-	done      chan struct{}
-	output    []byte // Buffer for state detection
-	scrollback []byte // Full terminal history buffer
+	cmd        *exec.Cmd
+	pty        *os.File
+	mu         sync.RWMutex
+	done       chan struct{}
+	output     []byte       // Buffer for state detection (legacy, kept for compatibility)
+	scrollback []byte       // Full terminal history buffer
+	tracker    *StateTracker // Enhanced state tracking
+	onStatusChange func(Status) // Callback when status changes
 }
 
 // NewSession creates a new session with default values
 func NewSession(id, name, directory string) *Session {
+	now := time.Now()
 	return &Session{
 		ID:        id,
 		Name:      name,
 		Status:    StatusIdle,
 		Color:     "#6366f1", // Default indigo
 		Metadata:  make(map[string]any),
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt: now,
+		UpdatedAt: now,
 		Directory: directory,
 		done:      make(chan struct{}),
+		tracker:   newStateTracker(),
 	}
+}
+
+// newStateTracker creates a new initialized StateTracker
+func newStateTracker() *StateTracker {
+	now := time.Now()
+	return &StateTracker{
+		lastOutputTime:    now,
+		stateChangedAt:    now,
+		outputWindowStart: now,
+		confidence:        1.0,
+		lines:             make([]LineEntry, 0, 50),
+		maxLines:          50,
+	}
+}
+
+// SetStatusChangeCallback sets a callback for status changes
+func (s *Session) SetStatusChangeCallback(cb func(Status)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onStatusChange = cb
 }
 
 // Start launches Claude Code in this session
@@ -106,10 +170,18 @@ func (s *Session) Start(rows, cols uint16, onOutput func([]byte)) error {
 	s.Status = StatusShell
 	s.UpdatedAt = time.Now()
 
+	// Initialize tracker timestamps
+	now := time.Now()
+	s.tracker.lastOutputTime = now
+	s.tracker.stateChangedAt = now
+
 	log.Printf("[Session %s] PTY started successfully", s.ID)
 
 	// Read output in goroutine
 	go s.readOutput(onOutput)
+
+	// Start timeout monitor goroutine
+	go s.monitorTimeouts()
 
 	return nil
 }
@@ -134,21 +206,32 @@ func (s *Session) Resume(sessionID string, onOutput func([]byte)) error {
 	s.Status = StatusWaitingInput
 	s.UpdatedAt = time.Now()
 
+	// Initialize tracker for Claude session
+	now := time.Now()
+	s.tracker.lastOutputTime = now
+	s.tracker.stateChangedAt = now
+	s.tracker.claudeActive = true
+
 	// Read output in goroutine
 	go s.readOutput(onOutput)
+
+	// Start timeout monitor
+	go s.monitorTimeouts()
 
 	return nil
 }
 
 // Write sends input to the session
 func (s *Session) Write(data []byte) (int, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	s.tracker.lastInputTime = time.Now()
+	ptyRef := s.pty
+	s.mu.Unlock()
 
-	if s.pty == nil {
+	if ptyRef == nil {
 		return 0, os.ErrClosed
 	}
-	return s.pty.Write(data)
+	return ptyRef.Write(data)
 }
 
 // Resize changes the terminal size
@@ -207,6 +290,8 @@ func (s *Session) Reset() {
 	s.pty = nil
 	s.done = make(chan struct{})
 	s.output = nil
+	s.scrollback = nil
+	s.tracker = newStateTracker() // Reset tracker
 	s.Status = StatusIdle
 	s.UpdatedAt = time.Now()
 }
@@ -300,78 +385,421 @@ func findLastValidUTF8(data []byte) int {
 	return n
 }
 
-// detectStatus analyzes output to determine session state
+// monitorTimeouts watches for state timeouts and recovers stuck states
+func (s *Session) monitorTimeouts() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+			s.checkTimeouts()
+		}
+	}
+}
+
+// checkTimeouts evaluates if current state has timed out
+func (s *Session) checkTimeouts() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.Status == StatusStopped || s.Status == StatusError || s.Status == StatusIdle {
+		return
+	}
+
+	now := time.Now()
+	timeSinceOutput := now.Sub(s.tracker.lastOutputTime)
+	timeSinceInput := now.Sub(s.tracker.lastInputTime)
+	timeSinceStateChange := now.Sub(s.tracker.stateChangedAt)
+
+	oldStatus := s.Status
+
+	switch s.Status {
+	case StatusThinking:
+		// If thinking for too long without output, probably waiting for input
+		if timeSinceOutput > ThinkingTimeout {
+			log.Printf("[Session %s] Thinking timeout (%.1fs), transitioning to waiting_input",
+				s.ID, timeSinceOutput.Seconds())
+			s.Status = StatusWaitingInput
+			s.tracker.confidence = 0.6
+		}
+
+	case StatusExecuting:
+		// Tool execution timeout
+		if timeSinceStateChange > ExecutingTimeout {
+			log.Printf("[Session %s] Executing timeout (%.1fs), transitioning to waiting_input",
+				s.ID, timeSinceStateChange.Seconds())
+			s.Status = StatusWaitingInput
+			s.tracker.confidence = 0.5
+		}
+
+	case StatusShell, StatusWaitingInput:
+		// If we sent input recently but no output, might be thinking
+		if !s.tracker.lastInputTime.IsZero() &&
+			timeSinceInput > InputToThinkingDelay &&
+			timeSinceInput < 5*time.Second &&
+			s.tracker.lastInputTime.After(s.tracker.lastOutputTime) {
+			// Input was sent, no response yet - probably thinking
+			if s.tracker.claudeActive {
+				s.Status = StatusThinking
+				s.tracker.confidence = 0.7
+			}
+		}
+	}
+
+	if s.Status != oldStatus {
+		s.tracker.stateChangedAt = now
+		s.UpdatedAt = now
+		if s.onStatusChange != nil {
+			// Call outside of lock
+			cb := s.onStatusChange
+			status := s.Status
+			go cb(status)
+		}
+	}
+}
+
+// detectStatus analyzes output to determine session state (hybrid approach)
 func (s *Session) detectStatus(data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Append to buffer for analysis (keep last 4KB for better context)
+	now := time.Now()
+	s.tracker.lastOutputTime = now
+
+	// Update I/O rate tracking
+	s.updateIORate(len(data), now)
+
+	// Append to legacy buffer for compatibility
 	s.output = append(s.output, data...)
 	if len(s.output) > 4096 {
 		s.output = s.output[len(s.output)-4096:]
 	}
 
-	str := string(s.output)
-	recentStr := string(data) // Just the new data
+	// Parse new data into lines and add to context buffer
+	newLines := s.parseLines(string(data))
+	s.addLinesToBuffer(newLines, now)
 
-	// Check for spinner characters first (thinking) - highest priority
+	// Hybrid detection: combine multiple signals
+	oldStatus := s.Status
+	newStatus, confidence := s.analyzeState()
+
+	// Only change state if confidence is high enough or it's a clear transition
+	if newStatus != oldStatus {
+		if confidence >= 0.6 || s.isStrongTransition(oldStatus, newStatus) {
+			s.Status = newStatus
+			s.tracker.stateChangedAt = now
+			s.tracker.confidence = confidence
+			s.UpdatedAt = now
+			log.Printf("[Session %s] State: %s -> %s (confidence: %.2f)",
+				s.ID, oldStatus, newStatus, confidence)
+		}
+	} else {
+		// Same state, but update confidence
+		s.tracker.confidence = confidence
+	}
+}
+
+// updateIORate tracks output velocity
+func (s *Session) updateIORate(bytes int, now time.Time) {
+	// Reset window if expired
+	if now.Sub(s.tracker.outputWindowStart) > IOWindowDuration {
+		s.tracker.outputRate = float64(s.tracker.outputBytes) / IOWindowDuration.Seconds()
+		s.tracker.outputBytes = 0
+		s.tracker.outputWindowStart = now
+	}
+	s.tracker.outputBytes += int64(bytes)
+}
+
+// parseLines splits data into individual lines with analysis
+func (s *Session) parseLines(data string) []LineEntry {
+	rawLines := strings.Split(data, "\n")
+	entries := make([]LineEntry, 0, len(rawLines))
+
+	for _, line := range rawLines {
+		if len(strings.TrimSpace(line)) == 0 {
+			continue
+		}
+
+		entry := LineEntry{
+			Content:        line,
+			Timestamp:      time.Now(),
+			HasSpinner:     s.detectSpinner(line),
+			HasToolPattern: s.detectToolPattern(line),
+			HasClaudeUI:    s.detectClaudeUI(line),
+			HasShellPrompt: s.detectShellPrompt(line),
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// addLinesToBuffer adds lines to the circular buffer
+func (s *Session) addLinesToBuffer(lines []LineEntry, now time.Time) {
+	for _, line := range lines {
+		line.Timestamp = now
+		s.tracker.lines = append(s.tracker.lines, line)
+	}
+
+	// Trim to max size
+	if len(s.tracker.lines) > s.tracker.maxLines {
+		excess := len(s.tracker.lines) - s.tracker.maxLines
+		s.tracker.lines = s.tracker.lines[excess:]
+	}
+}
+
+// analyzeState performs hybrid state analysis
+func (s *Session) analyzeState() (Status, float64) {
+	// 1. Check high-confidence patterns in recent lines (last 5)
+	recentLines := s.getRecentLines(5)
+
+	// Spinner = definitely thinking
+	for _, line := range recentLines {
+		if line.HasSpinner {
+			s.tracker.claudeActive = true
+			return StatusThinking, 0.95
+		}
+	}
+
+	// Tool patterns = executing
+	for _, line := range recentLines {
+		if line.HasToolPattern {
+			s.tracker.claudeActive = true
+			return StatusExecuting, 0.90
+		}
+	}
+
+	// 2. Analyze context from all buffered lines
+	contextStatus, contextConf := s.analyzeContext()
+	if contextConf >= 0.8 {
+		return contextStatus, contextConf
+	}
+
+	// 3. I/O behavior analysis
+	ioStatus, ioConf := s.analyzeIOBehavior()
+	if ioConf >= 0.7 {
+		return ioStatus, ioConf
+	}
+
+	// 4. Combine signals
+	if contextConf >= 0.5 && ioConf >= 0.5 {
+		// Both agree moderately
+		if contextStatus == ioStatus {
+			return contextStatus, (contextConf + ioConf) / 2
+		}
+	}
+
+	// 5. Fall back to context analysis
+	if contextConf >= 0.5 {
+		return contextStatus, contextConf
+	}
+
+	// 6. Default: maintain current state with lower confidence
+	return s.Status, 0.4
+}
+
+// getRecentLines returns the N most recent lines
+func (s *Session) getRecentLines(n int) []LineEntry {
+	if len(s.tracker.lines) <= n {
+		return s.tracker.lines
+	}
+	return s.tracker.lines[len(s.tracker.lines)-n:]
+}
+
+// analyzeContext looks at the full line buffer for patterns
+func (s *Session) analyzeContext() (Status, float64) {
+	if len(s.tracker.lines) == 0 {
+		return StatusShell, 0.3
+	}
+
+	// Count different indicators
+	var spinnerCount, toolCount, claudeUICount, shellPromptCount int
+	var lastClaudeUI, lastShellPrompt int = -1, -1
+
+	for i, line := range s.tracker.lines {
+		if line.HasSpinner {
+			spinnerCount++
+		}
+		if line.HasToolPattern {
+			toolCount++
+		}
+		if line.HasClaudeUI {
+			claudeUICount++
+			lastClaudeUI = i
+		}
+		if line.HasShellPrompt {
+			shellPromptCount++
+			lastShellPrompt = i
+		}
+	}
+
+	totalLines := len(s.tracker.lines)
+
+	// Recent spinner activity
+	if spinnerCount > 0 {
+		s.tracker.claudeActive = true
+		return StatusThinking, 0.85
+	}
+
+	// Recent tool activity
+	if toolCount > 0 {
+		s.tracker.claudeActive = true
+		return StatusExecuting, 0.80
+	}
+
+	// Claude UI present and more recent than shell prompt
+	if claudeUICount > 0 && lastClaudeUI > lastShellPrompt {
+		s.tracker.claudeActive = true
+		// Check if it looks like a prompt (waiting for input)
+		lastLine := s.tracker.lines[len(s.tracker.lines)-1]
+		if s.looksLikeClaudePrompt(lastLine.Content) {
+			return StatusWaitingInput, 0.85
+		}
+		return StatusWaitingInput, 0.70
+	}
+
+	// Shell prompt is most recent
+	if shellPromptCount > 0 && lastShellPrompt > lastClaudeUI {
+		// Check if Claude might still be active in background
+		if claudeUICount > totalLines/4 {
+			s.tracker.claudeActive = true
+			return StatusWaitingInput, 0.55
+		}
+		s.tracker.claudeActive = false
+		return StatusShell, 0.80
+	}
+
+	// No clear indicators
+	if s.tracker.claudeActive {
+		return StatusWaitingInput, 0.50
+	}
+	return StatusShell, 0.50
+}
+
+// analyzeIOBehavior uses I/O patterns to infer state
+func (s *Session) analyzeIOBehavior() (Status, float64) {
+	now := time.Now()
+	timeSinceInput := now.Sub(s.tracker.lastInputTime)
+	timeSinceOutput := now.Sub(s.tracker.lastOutputTime)
+
+	// High output rate = probably executing
+	if s.tracker.outputRate > 1000 { // > 1KB/s
+		return StatusExecuting, 0.75
+	}
+
+	// Input sent recently, no output = thinking
+	if !s.tracker.lastInputTime.IsZero() &&
+		timeSinceInput < 10*time.Second &&
+		s.tracker.lastInputTime.After(s.tracker.lastOutputTime) {
+		if s.tracker.claudeActive {
+			return StatusThinking, 0.65
+		}
+	}
+
+	// No activity for a while = probably waiting
+	if timeSinceOutput > 5*time.Second && s.tracker.claudeActive {
+		return StatusWaitingInput, 0.60
+	}
+
+	return s.Status, 0.3
+}
+
+// isStrongTransition checks if state transition should override confidence threshold
+func (s *Session) isStrongTransition(from, to Status) bool {
+	// Shell -> anything Claude is strong (Claude just started)
+	if from == StatusShell && (to == StatusThinking || to == StatusExecuting || to == StatusWaitingInput) {
+		return true
+	}
+	// Thinking/Executing -> WaitingInput is natural
+	if (from == StatusThinking || from == StatusExecuting) && to == StatusWaitingInput {
+		return true
+	}
+	return false
+}
+
+// Detection helper functions
+func (s *Session) detectSpinner(line string) bool {
 	spinnerChars := "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 	for _, r := range spinnerChars {
-		if containsRune(recentStr, r) {
-			s.Status = StatusThinking
-			s.UpdatedAt = time.Now()
-			return
+		if containsRune(line, r) {
+			return true
 		}
 	}
+	return false
+}
 
-	// Check for tool execution patterns in recent output
-	toolPatterns := []string{"Reading", "Writing", "Executing", "Searching", "── Edit", "── Bash", "── Read", "── Glob", "── Grep", "── Task"}
+func (s *Session) detectToolPattern(line string) bool {
+	toolPatterns := []string{
+		"Reading", "Writing", "Executing", "Searching",
+		"── Edit", "── Bash", "── Read", "── Glob", "── Grep", "── Task",
+		"── Write", "── WebFetch", "── WebSearch", "── LSP",
+		"✓ Edit", "✓ Bash", "✓ Read", "✓ Write",
+		"⠋ Edit", "⠋ Bash", "⠋ Read", "⠋ Task",
+	}
 	for _, pattern := range toolPatterns {
-		if containsString(recentStr, pattern) {
-			s.Status = StatusExecuting
-			s.UpdatedAt = time.Now()
-			return
+		if containsString(line, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Session) detectClaudeUI(line string) bool {
+	claudePatterns := []string{
+		"╭─", "╰─", "│ ",
+		"Claude Code", "claude>",
+		"cost:", "tokens:",
+		"Tool Result", "Tool Call",
+	}
+	for _, pattern := range claudePatterns {
+		if containsString(line, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Session) detectShellPrompt(line string) bool {
+	line = strings.TrimSpace(line)
+	if len(line) == 0 {
+		return false
+	}
+
+	// Common prompt endings
+	lastChar := line[len(line)-1]
+	if lastChar == '$' || lastChar == '%' || lastChar == '#' {
+		return true
+	}
+
+	// Fish/Starship style prompts
+	if containsString(line, "❯") && !containsString(line, "Claude") {
+		return true
+	}
+
+	// user@host patterns
+	if containsString(line, "@") && (containsString(line, ":") || containsString(line, "~")) {
+		// But not if it's clearly Claude output
+		if !containsString(line, "Claude") && !containsString(line, "│") {
+			return true
 		}
 	}
 
-	// Look at the last line to determine state
-	lastLine := getLastNonEmptyLine(str)
+	return false
+}
 
-	// Shell prompt patterns (bash/zsh) - typically end with $ or %
-	// and often have user@host or path patterns
-	isShellPrompt := (len(lastLine) > 0 && (lastLine[len(lastLine)-1] == '$' || lastLine[len(lastLine)-1] == '%')) ||
-		containsString(lastLine, "❯") && !containsString(str, "Claude") ||
-		containsString(lastLine, "@") && (containsString(lastLine, ":") || containsString(lastLine, "~"))
-
-	// Claude prompt patterns
-	isClaudePrompt := containsString(lastLine, "> ") && (containsString(str, "Claude") || containsString(str, "claude") || containsString(str, "╭") || containsString(str, "│"))
-
-	// Check for Claude-specific UI elements in buffer
-	hasClaudeUI := containsString(str, "╭─") || containsString(str, "╰─") ||
-		containsString(str, "│ ") || containsString(str, "Claude Code") ||
-		containsString(str, "cost:") || containsString(str, "tokens:")
-
-	if isShellPrompt && !hasClaudeUI {
-		s.Status = StatusShell
-		s.UpdatedAt = time.Now()
-		return
+func (s *Session) looksLikeClaudePrompt(line string) bool {
+	line = strings.TrimSpace(line)
+	// Claude's input prompt typically ends with "> " or similar
+	if strings.HasSuffix(line, "> ") || strings.HasSuffix(line, ">") {
+		return true
 	}
-
-	if isClaudePrompt || hasClaudeUI {
-		s.Status = StatusWaitingInput
-		s.UpdatedAt = time.Now()
-		return
+	// Or contains the prompt marker with Claude context
+	if containsString(line, "> ") && containsString(line, "│") {
+		return true
 	}
-
-	// If we were in a Claude state, stay there unless clearly shell
-	if s.Status == StatusThinking || s.Status == StatusExecuting || s.Status == StatusWaitingInput {
-		// Keep current status if no clear indicator
-		return
-	}
-
-	// Default to shell for new sessions
-	s.Status = StatusShell
-	s.UpdatedAt = time.Now()
+	return false
 }
 
 // getLastNonEmptyLine returns the last non-empty line from a string
