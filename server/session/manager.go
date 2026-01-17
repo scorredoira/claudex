@@ -36,6 +36,8 @@ type SessionInfo struct {
 	RobotModel     string            `json:"robot_model,omitempty"`
 	RobotColor     string            `json:"robot_color,omitempty"`
 	RobotAccessory string            `json:"robot_accessory,omitempty"`
+	HexQ           *int              `json:"hex_q,omitempty"`
+	HexR           *int              `json:"hex_r,omitempty"`
 }
 
 // NewManager creates a new session manager
@@ -135,6 +137,8 @@ func (m *Manager) saveSession(s *Session) error {
 		RobotModel:     s.RobotModel,
 		RobotColor:     s.RobotColor,
 		RobotAccessory: s.RobotAccessory,
+		HexQ:           s.HexQ,
+		HexR:           s.HexR,
 	}
 
 	data, err := json.MarshalIndent(info, "", "  ")
@@ -154,6 +158,11 @@ func (m *Manager) loadSessions() {
 	}
 
 	for _, file := range files {
+		// Skip client-state.json
+		if filepath.Base(file) == "client-state.json" {
+			continue
+		}
+
 		data, err := os.ReadFile(file)
 		if err != nil {
 			continue
@@ -183,6 +192,8 @@ func (m *Manager) loadSessions() {
 			RobotModel:     info.RobotModel,
 			RobotColor:     info.RobotColor,
 			RobotAccessory: info.RobotAccessory,
+			HexQ:           info.HexQ,
+			HexR:           info.HexR,
 			CreatedAt:      createdAt,
 			UpdatedAt:      updatedAt,
 			LastInputAt:    lastInputAt,
@@ -265,4 +276,99 @@ func (m *Manager) RemoveWorktree(s *Session) error {
 	}
 	// Will be called from handler after running git commands
 	return nil
+}
+
+// ClientState represents the complete UI state for persistence
+type ClientState struct {
+	ActiveSession string         `json:"activeSession,omitempty"`
+	SessionOrder  []string       `json:"sessionOrder,omitempty"`
+	Theme         string         `json:"theme,omitempty"`
+	View3D        bool           `json:"view3d"`
+	Camera        *CameraState   `json:"camera,omitempty"`
+	EmptyIslands  []HexPosition  `json:"emptyIslands,omitempty"` // Empty hex parcels (islands)
+}
+
+// HexPosition represents a hex grid coordinate
+type HexPosition struct {
+	Q int `json:"q"`
+	R int `json:"r"`
+}
+
+// CameraState represents 3D camera position
+type CameraState struct {
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+	Z       float64 `json:"z"`
+	TargetX float64 `json:"targetX"`
+	TargetY float64 `json:"targetY"`
+	TargetZ float64 `json:"targetZ"`
+}
+
+// GetClientState loads the client state from disk
+func (m *Manager) GetClientState() (*ClientState, error) {
+	path := filepath.Join(m.storageDir, "client-state.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Return default state
+			return &ClientState{
+				Theme:  "light",
+				View3D: true,
+			}, nil
+		}
+		return nil, err
+	}
+
+	var state ClientState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// SaveClientState persists the client state to disk
+func (m *Manager) SaveClientState(state *ClientState) error {
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	path := filepath.Join(m.storageDir, "client-state.json")
+	return os.WriteFile(path, data, 0644)
+}
+
+// UpdateAllSessionCwds updates the cwd for all running sessions
+func (m *Manager) UpdateAllSessionCwds() {
+	m.mu.RLock()
+	sessions := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		sessions = append(sessions, s)
+	}
+	m.mu.RUnlock()
+
+	for _, s := range sessions {
+		if s.UpdateCwd() {
+			m.mu.Lock()
+			m.saveSession(s)
+			m.mu.Unlock()
+		}
+	}
+}
+
+// SaveAllSessions saves all session states (called on shutdown)
+func (m *Manager) SaveAllSessions() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, s := range m.sessions {
+		// Update cwd if process is running
+		s.UpdateCwd()
+		// Save session and scrollback
+		m.saveSession(s)
+		scrollback := s.GetScrollback()
+		if len(scrollback) > 0 {
+			path := filepath.Join(m.storageDir, s.ID+".scrollback")
+			os.WriteFile(path, scrollback, 0644)
+		}
+	}
 }

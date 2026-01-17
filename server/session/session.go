@@ -1,9 +1,11 @@
 package session
 
 import (
+	"bufio"
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -91,6 +93,10 @@ type Session struct {
 	RobotModel     string `json:"robot_model,omitempty"`     // Robot model type (classic, round, tall, chunky, mini, angular)
 	RobotColor     string `json:"robot_color,omitempty"`     // Custom robot color (hex)
 	RobotAccessory string `json:"robot_accessory,omitempty"` // Accessory (none, hat, glasses, bowtie, antenna)
+
+	// Hex grid position (3D world)
+	HexQ *int `json:"hex_q,omitempty"` // Hex coordinate Q
+	HexR *int `json:"hex_r,omitempty"` // Hex coordinate R
 
 	// Internal fields (not serialized)
 	cmd        *exec.Cmd
@@ -910,4 +916,93 @@ func (s *Session) GetScrollback() []byte {
 	result := make([]byte, len(s.scrollback))
 	copy(result, s.scrollback)
 	return result
+}
+
+// GetProcessCwd returns the current working directory of the shell process.
+// Works on both macOS and Linux by querying the OS directly.
+func (s *Session) GetProcessCwd() (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.cmd == nil || s.cmd.Process == nil {
+		return s.Directory, nil // Return stored directory if process not running
+	}
+
+	pid := s.cmd.Process.Pid
+	return getProcessCwd(pid)
+}
+
+// getProcessCwd gets the cwd of a process by PID (cross-platform)
+func getProcessCwd(pid int) (string, error) {
+	switch runtime.GOOS {
+	case "linux":
+		// On Linux, read /proc/PID/cwd symlink
+		link := "/proc/" + itoa(pid) + "/cwd"
+		cwd, err := os.Readlink(link)
+		if err != nil {
+			return "", err
+		}
+		return cwd, nil
+
+	case "darwin":
+		// On macOS, use lsof to get cwd
+		cmd := exec.Command("lsof", "-a", "-d", "cwd", "-p", itoa(pid), "-Fn")
+		output, err := cmd.Output()
+		if err != nil {
+			return "", err
+		}
+		// Parse lsof output: lines starting with 'n' contain the path
+		scanner := bufio.NewScanner(strings.NewReader(string(output)))
+		for scanner.Scan() {
+			line := scanner.Text()
+			if len(line) > 1 && line[0] == 'n' {
+				return line[1:], nil
+			}
+		}
+		return "", os.ErrNotExist
+
+	default:
+		return "", os.ErrNotExist
+	}
+}
+
+// itoa converts int to string without importing strconv
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var b [20]byte
+	n := len(b)
+	neg := i < 0
+	if neg {
+		i = -i
+	}
+	for i > 0 {
+		n--
+		b[n] = byte('0' + i%10)
+		i /= 10
+	}
+	if neg {
+		n--
+		b[n] = '-'
+	}
+	return string(b[n:])
+}
+
+// UpdateCwd updates the Directory field with the current process cwd
+func (s *Session) UpdateCwd() bool {
+	cwd, err := s.GetProcessCwd()
+	if err != nil {
+		return false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if cwd != s.Directory {
+		s.Directory = cwd
+		s.UpdatedAt = time.Now()
+		return true
+	}
+	return false
 }

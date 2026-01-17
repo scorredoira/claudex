@@ -56,16 +56,22 @@ type ResizeData struct {
 // Handler manages WebSocket connections
 type Handler struct {
 	manager     *session.Manager
-	connections map[*websocket.Conn]map[string]bool // conn -> subscribed session IDs
-	saveTimers  map[string]*time.Timer              // session ID -> save timer
+	connections map[*websocket.Conn]*connState // conn -> connection state
+	saveTimers  map[string]*time.Timer         // session ID -> save timer
 	mu          sync.RWMutex
+}
+
+// connState holds per-connection state with its own mutex for writes
+type connState struct {
+	subscriptions map[string]bool
+	writeMu       sync.Mutex
 }
 
 // NewHandler creates a new WebSocket handler
 func NewHandler(manager *session.Manager) *Handler {
 	return &Handler{
 		manager:     manager,
-		connections: make(map[*websocket.Conn]map[string]bool),
+		connections: make(map[*websocket.Conn]*connState),
 		saveTimers:  make(map[string]*time.Timer),
 	}
 }
@@ -80,7 +86,7 @@ func (h *Handler) HandleConnection(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	h.mu.Lock()
-	h.connections[conn] = make(map[string]bool)
+	h.connections[conn] = &connState{subscriptions: make(map[string]bool)}
 	h.mu.Unlock()
 
 	defer func() {
@@ -141,14 +147,24 @@ func (h *Handler) handleMessage(conn *websocket.Conn, msg Message) {
 // handleSubscribe subscribes a connection to a session's output
 func (h *Handler) handleSubscribe(conn *websocket.Conn, sessionID string) {
 	h.mu.Lock()
-	if subs, ok := h.connections[conn]; ok {
-		subs[sessionID] = true
+	state, ok := h.connections[conn]
+	if ok {
+		state.subscriptions[sessionID] = true
 	}
 	h.mu.Unlock()
+
+	if !ok {
+		return
+	}
 
 	// Send existing scrollback to new subscriber
 	sess, ok := h.manager.Get(sessionID)
 	if ok {
+		// Update cwd from process
+		if sess.UpdateCwd() {
+			h.manager.UpdateSession(sess)
+		}
+
 		scrollback := sess.GetScrollback()
 		if len(scrollback) > 0 {
 			msg := OutputMessage{
@@ -157,7 +173,10 @@ func (h *Handler) handleSubscribe(conn *websocket.Conn, sessionID string) {
 				Data:      base64.StdEncoding.EncodeToString(scrollback),
 			}
 			msgBytes, _ := json.Marshal(msg)
+			// Use per-connection mutex for writes
+			state.writeMu.Lock()
 			conn.WriteMessage(websocket.TextMessage, msgBytes)
+			state.writeMu.Unlock()
 		}
 	}
 }
@@ -167,8 +186,8 @@ func (h *Handler) handleUnsubscribe(conn *websocket.Conn, sessionID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if subs, ok := h.connections[conn]; ok {
-		delete(subs, sessionID)
+	if state, ok := h.connections[conn]; ok {
+		delete(state.subscriptions, sessionID)
 	}
 }
 
@@ -262,6 +281,10 @@ func (h *Handler) scheduleScrollbackSave(sessionID string, sess *session.Session
 
 	// Schedule new save in 5 seconds
 	h.saveTimers[sessionID] = time.AfterFunc(5*time.Second, func() {
+		// Update cwd before saving
+		if sess.UpdateCwd() {
+			h.manager.UpdateSession(sess)
+		}
 		h.manager.SaveScrollback(sess)
 	})
 }
@@ -273,7 +296,10 @@ func (h *Handler) handleStop(sessionID string) {
 		return
 	}
 
-	// Save scrollback before stopping
+	// Update cwd and save before stopping
+	if sess.UpdateCwd() {
+		h.manager.UpdateSession(sess)
+	}
 	h.manager.SaveScrollback(sess)
 
 	sess.Stop()
@@ -326,9 +352,11 @@ func (h *Handler) broadcastOutput(sessionID string, data []byte) {
 
 	msgBytes, _ := json.Marshal(msg)
 
-	for conn, subs := range h.connections {
-		if subs[sessionID] {
+	for conn, state := range h.connections {
+		if state.subscriptions[sessionID] {
+			state.writeMu.Lock()
 			conn.WriteMessage(websocket.TextMessage, msgBytes)
+			state.writeMu.Unlock()
 		}
 	}
 }
@@ -346,9 +374,11 @@ func (h *Handler) broadcastStatus(sessionID string, status session.Status) {
 
 	msgBytes, _ := json.Marshal(msg)
 
-	for conn, subs := range h.connections {
-		if subs[sessionID] {
+	for conn, state := range h.connections {
+		if state.subscriptions[sessionID] {
+			state.writeMu.Lock()
 			conn.WriteMessage(websocket.TextMessage, msgBytes)
+			state.writeMu.Unlock()
 		}
 	}
 }
@@ -356,6 +386,9 @@ func (h *Handler) broadcastStatus(sessionID string, status session.Status) {
 // HandleSessions returns the list of sessions (REST endpoint)
 func (h *Handler) HandleSessions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	// Update cwds for all running sessions
+	h.manager.UpdateAllSessionCwds()
 
 	sessions := h.manager.List()
 	json.NewEncoder(w).Encode(sessions)
@@ -371,6 +404,8 @@ func (h *Handler) HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name      string `json:"name"`
 		Directory string `json:"directory"`
+		HexQ      *int   `json:"hex_q"`
+		HexR      *int   `json:"hex_r"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -390,6 +425,13 @@ func (h *Handler) HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Set hex position if provided
+	if req.HexQ != nil && req.HexR != nil {
+		sess.HexQ = req.HexQ
+		sess.HexR = req.HexR
+		h.manager.UpdateSession(sess)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -519,6 +561,36 @@ func (h *Handler) HandleSessionUpdate(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		http.Error(w, "Unknown action", http.StatusBadRequest)
+	}
+}
+
+// HandleClientState handles GET/PUT for client UI state
+func (h *Handler) HandleClientState(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		state, err := h.manager.GetClientState()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(state)
+
+	case http.MethodPut:
+		var state session.ClientState
+		if err := json.NewDecoder(r.Body).Decode(&state); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := h.manager.SaveClientState(&state); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 

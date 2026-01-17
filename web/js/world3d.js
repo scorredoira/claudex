@@ -11,6 +11,14 @@ class World3D {
         this.emptyParcels = new Map(); // q,r -> empty parcel mesh
         this.isActive = false;
 
+        // Camera state callbacks (set by app.js)
+        this.onSaveCamera = null;
+        this.getInitialCamera = null;
+
+        // Empty islands callbacks (set by app.js)
+        this.onSaveEmptyIslands = null;
+        this.getEmptyIslands = null;
+
         // Hex grid settings
         this.hexSize = 1.2;
         this.hexHeight = 0.3;
@@ -917,13 +925,39 @@ class World3D {
         });
         this.emptyParcels.clear();
 
-        // Assign positions to sessions (spiral from center)
-        const positions = this.getSpiralPositions(sessionsMap.size);
-        let i = 0;
+        // Collect sessions with and without saved positions
+        const withPosition = [];
+        const withoutPosition = [];
+        const occupiedPositions = new Set();
 
         sessionsMap.forEach((session, id) => {
-            const { q, r } = positions[i];
+            if (session.hex_q !== undefined && session.hex_q !== null &&
+                session.hex_r !== undefined && session.hex_r !== null) {
+                withPosition.push({ session, id, q: session.hex_q, r: session.hex_r });
+                occupiedPositions.add(`${session.hex_q},${session.hex_r}`);
+            } else {
+                withoutPosition.push({ session, id });
+            }
+        });
 
+        // Assign spiral positions to sessions without saved positions
+        const spiralPositions = this.getSpiralPositions(sessionsMap.size + 10); // Extra buffer
+        let spiralIndex = 0;
+        withoutPosition.forEach(item => {
+            // Find next free spiral position
+            while (occupiedPositions.has(`${spiralPositions[spiralIndex].q},${spiralPositions[spiralIndex].r}`)) {
+                spiralIndex++;
+            }
+            const { q, r } = spiralPositions[spiralIndex];
+            item.q = q;
+            item.r = r;
+            occupiedPositions.add(`${q},${r}`);
+            spiralIndex++;
+        });
+
+        // Create all parcels and robots
+        const allSessions = [...withPosition, ...withoutPosition];
+        allSessions.forEach(({ session, id, q, r }) => {
             // Create parcel
             const parcel = this.createParcel(q, r, session);
             this.scene.add(parcel);
@@ -939,11 +973,9 @@ class World3D {
             // Store position in session for reference
             session._hexQ = q;
             session._hexR = r;
-
-            i++;
         });
 
-        // Create empty parcels around occupied ones
+        // Create empty parcels around occupied ones + load saved empty islands
         this.updateEmptyParcels();
     }
 
@@ -1003,6 +1035,15 @@ class World3D {
             emptyPositions.add('0,0');
         }
 
+        // Add saved empty islands
+        const savedIslands = this.getEmptyIslands ? this.getEmptyIslands() : [];
+        savedIslands.forEach(({ q, r }) => {
+            const key = `${q},${r}`;
+            if (!occupied.has(key)) {
+                emptyPositions.add(key);
+            }
+        });
+
         // Create empty parcel meshes
         emptyPositions.forEach(key => {
             const [q, r] = key.split(',').map(Number);
@@ -1046,6 +1087,11 @@ class World3D {
                 e.stopPropagation();
                 this.onCanvasClick(e);
             }
+        });
+
+        this.canvas.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            this.onCanvasDoubleClick(e);
         });
 
         this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
@@ -1178,6 +1224,51 @@ class World3D {
             const parcel = intersects[0].object;
             if (parcel.userData.isEmpty && this.onCreateSession) {
                 const { q, r } = parcel.userData;
+                this.onCreateSession(q, r);
+            }
+        }
+    }
+
+    onCanvasDoubleClick(event) {
+        const rect = this.canvas.getBoundingClientRect();
+        this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+        this.raycaster.setFromCamera(this.mouse, this.camera);
+
+        // Check if clicking on existing parcel, robot, or empty parcel - ignore
+        const allMeshes = [
+            ...Array.from(this.parcels.values()),
+            ...Array.from(this.emptyParcels.values())
+        ];
+        this.robots.forEach(robot => {
+            robot.traverse(child => {
+                if (child.isMesh) allMeshes.push(child);
+            });
+        });
+
+        let intersects = this.raycaster.intersectObjects(allMeshes, true);
+        if (intersects.length > 0) {
+            return; // Clicked on existing object, don't create island
+        }
+
+        // Raycast to ground plane (Y = 0)
+        const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+        const intersection = new THREE.Vector3();
+        this.raycaster.ray.intersectPlane(groundPlane, intersection);
+
+        if (intersection) {
+            // Convert world position to hex coordinates
+            const { q, r } = this.worldToHex(intersection.x, intersection.z);
+            const key = `${q},${r}`;
+
+            // Check if this hex position is already occupied
+            const occupied = new Set();
+            this.parcels.forEach((_, k) => occupied.add(k));
+            this.emptyParcels.forEach((_, k) => occupied.add(k));
+
+            if (!occupied.has(key) && this.onCreateSession) {
+                // Create session directly at this position
                 this.onCreateSession(q, r);
             }
         }
@@ -1603,19 +1694,16 @@ class World3D {
                 z: this.controls.target.z
             }
         };
-        localStorage.setItem('claudex-camera', JSON.stringify(data));
+        if (this.onSaveCamera) {
+            this.onSaveCamera(data);
+        }
     }
 
     restoreCameraPosition() {
-        const saved = localStorage.getItem('claudex-camera');
-        if (saved) {
-            try {
-                const data = JSON.parse(saved);
-                this.camera.position.set(data.position.x, data.position.y, data.position.z);
-                this.controls.target.set(data.target.x, data.target.y, data.target.z);
-            } catch (e) {
-                // Ignore parse errors
-            }
+        const data = this.getInitialCamera ? this.getInitialCamera() : null;
+        if (data && data.position && data.target) {
+            this.camera.position.set(data.position.x, data.position.y, data.position.z);
+            this.controls.target.set(data.target.x, data.target.y, data.target.z);
         }
     }
 }

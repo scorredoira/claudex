@@ -8,14 +8,46 @@ class Claudex {
         this.modalTerminal = null;
         this.world3d = null;
         this.is3DView = false;
+        this.clientState = null;
+        this._saveStateTimeout = null;
 
         this.init();
     }
 
     async init() {
+        await this.loadClientState();
         this.connectWebSocket();
         this.setupEventListeners();
         await this.loadSessions();
+    }
+
+    // Client state persistence (server-side)
+    async loadClientState() {
+        try {
+            const response = await fetch('/api/client-state');
+            this.clientState = await response.json();
+        } catch (err) {
+            console.error('Failed to load client state:', err);
+            this.clientState = { theme: 'light', view3d: true };
+        }
+    }
+
+    saveClientState() {
+        // Debounce saves to avoid excessive requests
+        if (this._saveStateTimeout) {
+            clearTimeout(this._saveStateTimeout);
+        }
+        this._saveStateTimeout = setTimeout(async () => {
+            try {
+                await fetch('/api/client-state', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.clientState)
+                });
+            } catch (err) {
+                console.error('Failed to save client state:', err);
+            }
+        }, 500);
     }
 
     // WebSocket connection
@@ -309,14 +341,14 @@ class Claudex {
         const grid = document.getElementById('sessions-grid');
         const order = Array.from(grid.querySelectorAll('.session-card'))
             .map(card => card.dataset.sessionId);
-        localStorage.setItem('sessionOrder', JSON.stringify(order));
+        this.clientState.sessionOrder = order;
+        this.saveClientState();
     }
 
     applySavedOrder() {
-        const savedOrder = localStorage.getItem('sessionOrder');
-        if (!savedOrder) return;
+        const order = this.clientState?.sessionOrder;
+        if (!order || !order.length) return;
 
-        const order = JSON.parse(savedOrder);
         const grid = document.getElementById('sessions-grid');
 
         order.forEach(id => {
@@ -471,6 +503,8 @@ class Claudex {
         if (!session) return;
 
         this.activeSessionId = sessionId;
+        this.clientState.activeSession = sessionId;
+        this.saveClientState();
 
         // Update modal
         const titleInput = document.getElementById('modal-title');
@@ -650,14 +684,15 @@ class Claudex {
 
         // Theme toggle
         const themeToggle = document.getElementById('theme-toggle');
-        const savedTheme = localStorage.getItem('theme') || 'light';
+        const savedTheme = this.clientState?.theme || 'light';
         this.setTheme(savedTheme);
 
         themeToggle.onclick = () => {
             const currentTheme = document.documentElement.getAttribute('data-theme');
             const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
             this.setTheme(newTheme);
-            localStorage.setItem('theme', newTheme);
+            this.clientState.theme = newTheme;
+            this.saveClientState();
         };
 
         // New session button
@@ -762,6 +797,24 @@ class Claudex {
         };
         this.world3d.onCustomizeSession = (sessionId) => {
             this.showCustomizePanel(sessionId);
+        };
+
+        // Camera state callbacks
+        this.world3d.onSaveCamera = (cameraData) => {
+            this.clientState.camera = cameraData;
+            this.saveClientState();
+        };
+        this.world3d.getInitialCamera = () => {
+            return this.clientState?.camera || null;
+        };
+
+        // Empty islands callbacks
+        this.world3d.onSaveEmptyIslands = (islands) => {
+            this.clientState.emptyIslands = islands;
+            this.saveClientState();
+        };
+        this.world3d.getEmptyIslands = () => {
+            return this.clientState?.emptyIslands || [];
         };
 
         // Sync current sessions
@@ -911,11 +964,19 @@ class Claudex {
         const adjectives = ['Happy', 'Busy', 'Clever', 'Swift', 'Bright', 'Calm'];
         const name = `${adjectives[Math.abs(q + r) % adjectives.length]} ${names[Math.abs(q * 2 + r) % names.length]}`;
 
+        // Remove this position from empty islands if it was one
+        if (this.clientState.emptyIslands) {
+            this.clientState.emptyIslands = this.clientState.emptyIslands.filter(
+                pos => !(pos.q === q && pos.r === r)
+            );
+            this.saveClientState();
+        }
+
         try {
             const response = await fetch('/api/sessions/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name })
+                body: JSON.stringify({ name, hex_q: q, hex_r: r })
             });
 
             const session = await response.json();
@@ -967,13 +1028,13 @@ class Claudex {
             }
         }
 
-        localStorage.setItem('view3d', this.is3DView);
+        this.clientState.view3d = this.is3DView;
+        this.saveClientState();
     }
 
     restore3DViewPreference() {
-        const saved = localStorage.getItem('view3d');
         // Default to 3D view (true) unless explicitly set to false
-        if (saved !== 'false') {
+        if (this.clientState?.view3d !== false) {
             this.toggle3DView();
         }
     }
