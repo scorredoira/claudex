@@ -870,14 +870,14 @@ class World3D {
             }
         }
 
-        // Check empty parcels - create pending session
+        // Check empty parcels - create session directly
         const emptyMeshes = Array.from(this.emptyParcels.values());
         intersects = this.raycaster.intersectObjects(emptyMeshes, false);
         if (intersects.length > 0) {
             const parcel = intersects[0].object;
-            if (parcel.userData.isEmpty) {
+            if (parcel.userData.isEmpty && this.onCreateSession) {
                 const { q, r } = parcel.userData;
-                this.createPendingSession(q, r);
+                this.onCreateSession(q, r);
             }
         }
     }

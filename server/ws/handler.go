@@ -379,7 +379,8 @@ func (h *Handler) HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Directory == "" {
-		req.Directory, _ = os.Getwd()
+		// Default to home directory
+		req.Directory, _ = os.UserHomeDir()
 	} else {
 		// Expand ~ to home directory
 		req.Directory = expandHome(req.Directory)
