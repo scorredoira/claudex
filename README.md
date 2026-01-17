@@ -1,46 +1,39 @@
 # Claudex
 
-Gestor de múltiples sesiones de Claude Code. Permite ejecutar y monitorear varias instancias de Claude Code desde una interfaz web.
+A multi-session manager for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with an interactive 3D visualization. Run and monitor multiple Claude Code instances from a single web interface.
 
-## Arquitectura
+![Claudex 3D World](docs/images/world-3d.png)
 
-```
-claudex/
-├── server/              # Backend Go
-│   ├── main.go          # Punto de entrada, servidor HTTP
-│   ├── session/
-│   │   ├── session.go   # Sesión PTY con Claude Code
-│   │   └── manager.go   # Gestión de múltiples sesiones
-│   └── ws/
-│       └── handler.go   # WebSocket para comunicación en tiempo real
-├── web/                 # Frontend
-│   ├── index.html
-│   ├── css/style.css    # Estilos con tema claro/oscuro
-│   └── js/app.js        # xterm.js + WebSocket client
-└── sessions/            # Persistencia de sesiones (JSON)
-```
+## Features
 
-## Tecnologías
+- **3D World View**: Navigate your sessions in an interactive 3D environment with cute robots on hexagonal tiles
+- **Multiple Sessions**: Run several Claude Code instances simultaneously
+- **Real-time Status**: Visual indicators show what each session is doing (idle, thinking, executing, waiting for input)
+- **Full Terminal**: Complete xterm.js terminal with UTF-8 support and all keyboard shortcuts
+- **Session Experiments**: Fork any session to create experimental branches
+- **Robot Customization**: Personalize each session's robot with different models, colors, and accessories
+- **Light/Dark Theme**: Toggle between themes with persistent preference
+- **Desktop Notifications**: Get notified when a session needs your attention
 
-- **Backend**: Go con gorilla/websocket y creack/pty
-- **Frontend**: Vanilla JS con xterm.js
-- **Comunicación**: WebSocket con datos en Base64 para UTF-8 correcto
+![Terminal Session](docs/images/terminal-session.png)
 
-## Funcionalidades implementadas
+## Views
 
-- [x] Crear sesiones de Claude Code con nombre y directorio
-- [x] Terminal web completa (xterm.js) con soporte UTF-8
-- [x] Teclas especiales funcionan (Escape, Ctrl+C, flechas, etc.)
-- [x] Estados de sesión: idle, thinking, executing, waiting_input, stopped
-- [x] Indicador visual de estado en tarjetas (borde coloreado)
-- [x] Tema claro/oscuro (toggle + persistencia en localStorage)
-- [x] Terminal con tema claro/oscuro
-- [x] Historial de terminal preservado al cerrar/abrir modal
-- [x] Notificaciones cuando una sesión termina de procesar
-- [x] Persistencia de sesiones en archivos JSON
-- [x] Soporte para `~` en rutas de directorio
+Switch between two views:
 
-## Ejecutar
+- **3D World**: Interactive hexagonal world where each session is represented by a customizable robot
+- **Cards View**: Traditional grid layout showing session cards
+
+![Cards View](docs/images/cards-view.png)
+
+## Quick Start
+
+### Prerequisites
+
+- Go 1.21+
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and configured
+
+### Run
 
 ```bash
 cd server
@@ -48,57 +41,64 @@ go build -o claudex .
 ./claudex
 ```
 
-Abrir http://localhost:8080
+Open http://localhost:8080
 
-## Modelo de datos
+## Architecture
 
-```go
-type Session struct {
-    ID        string
-    Name      string
-    Status    Status            // idle, thinking, executing, waiting_input, stopped
-    Color     string            // Color hex para UI (preparado para Fase 2)
-    Position  *Position3D       // Coordenadas 3D (preparado para Fase 2)
-    Metadata  map[string]any    // Extensible
-    Directory string            // Directorio de trabajo
-}
-
-type Position3D struct {
-    Q     int     // Coordenada hexagonal Q
-    R     int     // Coordenada hexagonal R
-    Layer float64 // Capa vertical
-}
+```
+claudex/
+├── server/              # Go backend
+│   ├── main.go          # HTTP server entry point
+│   ├── session/
+│   │   ├── session.go   # PTY session with Claude Code
+│   │   └── manager.go   # Multi-session management
+│   └── ws/
+│       └── handler.go   # WebSocket for real-time communication
+├── web/                 # Frontend
+│   ├── index.html
+│   ├── css/style.css
+│   └── js/
+│       ├── app.js       # Main application logic
+│       └── world3d.js   # Three.js 3D world
+└── sessions/            # Session persistence (JSON)
 ```
 
-## API WebSocket
+## Technology Stack
 
-Mensajes del cliente al servidor:
-- `subscribe`: Suscribirse a output de una sesión
-- `unsubscribe`: Desuscribirse
-- `start`: Iniciar Claude Code en una sesión
-- `stop`: Detener sesión
-- `input`: Enviar input al terminal
-- `resize`: Cambiar tamaño del terminal
+- **Backend**: Go with [gorilla/websocket](https://github.com/gorilla/websocket) and [creack/pty](https://github.com/creack/pty)
+- **Frontend**: Vanilla JavaScript with [xterm.js](https://xtermjs.org/) and [Three.js](https://threejs.org/)
+- **Communication**: WebSocket with Base64 encoding for proper UTF-8 handling
 
-Mensajes del servidor al cliente:
-- `output`: Datos del terminal (Base64)
-- `status`: Cambio de estado de sesión
+## Keyboard Shortcuts (3D View)
 
-## API REST
+- **Space**: Center camera on sessions
+- **Cmd/Ctrl**: Show session labels on tiles
+- **Click on robot**: Open radial action menu
+- **Click on empty tile**: Create new session
 
-- `GET /api/sessions` - Lista de sesiones
-- `POST /api/sessions/create` - Crear sesión `{name, directory}`
+## API
 
-## Fase 2 (pendiente)
+### WebSocket Messages
 
-Mundo virtual 3D con rejilla de hexágonos:
-- Navegación 3D por el espacio de sesiones
-- Cada hexágono es una sesión
-- Colores personalizables por sesión
-- Visualización espacial del estado de múltiples sesiones
+Client → Server:
+- `subscribe` / `unsubscribe`: Session output subscription
+- `start` / `stop`: Control Claude Code process
+- `input`: Send terminal input
+- `resize`: Update terminal dimensions
 
-## Preparado para remoto (futuro)
+Server → Client:
+- `output`: Terminal data (Base64)
+- `status`: Session state changes
 
-La arquitectura está preparada para conexión remota:
-- El backend podría conectarse a máquinas remotas vía SSH
-- El modelo Session tiene campos extensibles para metadatos de conexión
+### REST Endpoints
+
+- `GET /api/sessions` - List all sessions
+- `POST /api/sessions/create` - Create new session
+- `DELETE /api/sessions/{id}` - Delete session
+- `PUT /api/sessions/{id}/name` - Rename session
+- `PUT /api/sessions/{id}/customize` - Update robot customization
+- `POST /api/sessions/{id}/experiment` - Create experiment fork
+
+## License
+
+MIT
