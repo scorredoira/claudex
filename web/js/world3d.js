@@ -70,6 +70,12 @@ class World3D {
         this.controls.maxPolarAngle = Math.PI / 2.2;
         this.controls.target.set(0, 0, 0);
 
+        // Restore camera position from localStorage
+        this.restoreCameraPosition();
+
+        // Save camera position on change
+        this.controls.addEventListener('end', () => this.saveCameraPosition());
+
         // Lights
         this.setupLights();
 
@@ -83,6 +89,15 @@ class World3D {
 
         // Event listeners
         this.setupEventListeners();
+
+        // Radial menu
+        this.radialMenu = document.getElementById('radial-menu');
+        this.radialSessionId = null;
+        this.setupRadialMenu();
+
+        // Pending session
+        this.pendingSession = null;
+        this.setupPendingSession();
 
         // Animation
         this.clock = new THREE.Clock();
@@ -232,43 +247,48 @@ class World3D {
         edge.scale.set(0.95, 0.95, 1);
         group.add(edge);
 
-        // Name label on the tile
-        if (session) {
-            const label = this.createTileLabel(session.name || session.id);
-            label.position.y = this.hexHeight + 0.01;
-            label.rotation.x = -Math.PI / 2;
-            group.add(label);
-            group.userData.label = label;
-        }
-
         // Position in hex grid
         const pos = this.hexToWorld(q, r);
         group.position.set(pos.x, 0, pos.z);
 
         group.userData = { q, r, sessionId: session?.id, type: 'parcel' };
 
+        // Name label on the tile (after userData is set)
+        if (session) {
+            const label = this.createTileLabel(session.name || session.id);
+            label.position.set(0, this.hexHeight + 0.15, this.hexSize * 0.5);
+            group.add(label);
+            group.userData.label = label;
+        }
+
         return group;
     }
 
     createTileLabel(text) {
         const canvas = document.createElement('canvas');
-        const size = 256;
-        canvas.width = size;
-        canvas.height = size;
+        canvas.width = 512;
+        canvas.height = 160;
         const ctx = canvas.getContext('2d');
 
         // Truncate text if too long
         let displayText = text;
-        if (displayText.length > 12) {
-            displayText = displayText.substring(0, 11) + '…';
+        if (displayText.length > 14) {
+            displayText = displayText.substring(0, 13) + '…';
         }
 
-        // Draw text
-        ctx.font = 'bold 32px Arial, sans-serif';
-        ctx.fillStyle = '#2a4a20';
+        // Draw text with strong outline for visibility on grass
+        ctx.font = 'bold 64px Arial, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(displayText, size / 2, size / 2);
+
+        // Dark outline
+        ctx.strokeStyle = '#1a3a10';
+        ctx.lineWidth = 6;
+        ctx.strokeText(displayText, canvas.width / 2, canvas.height / 2);
+
+        // White text
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(displayText, canvas.width / 2, canvas.height / 2);
 
         const texture = new THREE.CanvasTexture(canvas);
         texture.needsUpdate = true;
@@ -276,10 +296,11 @@ class World3D {
         const material = new THREE.MeshBasicMaterial({
             map: texture,
             transparent: true,
-            depthWrite: false
+            depthWrite: false,
+            side: THREE.DoubleSide
         });
 
-        const planeGeo = new THREE.PlaneGeometry(this.hexSize * 1.6, this.hexSize * 1.6);
+        const planeGeo = new THREE.PlaneGeometry(this.hexSize * 1.6, this.hexSize * 0.5);
         const mesh = new THREE.Mesh(planeGeo, material);
 
         mesh.userData.canvas = canvas;
@@ -295,21 +316,27 @@ class World3D {
 
         const ctx = label.userData.ctx;
         const canvas = label.userData.canvas;
-        const size = canvas.width;
 
         // Truncate text if too long
         let displayText = text;
-        if (displayText.length > 12) {
-            displayText = displayText.substring(0, 11) + '…';
+        if (displayText.length > 14) {
+            displayText = displayText.substring(0, 13) + '…';
         }
 
         // Clear and redraw
-        ctx.clearRect(0, 0, size, size);
-        ctx.font = 'bold 32px Arial, sans-serif';
-        ctx.fillStyle = '#2a4a20';
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.font = 'bold 64px Arial, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(displayText, size / 2, size / 2);
+
+        // Dark outline
+        ctx.strokeStyle = '#1a3a10';
+        ctx.lineWidth = 6;
+        ctx.strokeText(displayText, canvas.width / 2, canvas.height / 2);
+
+        // White text
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(displayText, canvas.width / 2, canvas.height / 2);
 
         label.userData.texture.needsUpdate = true;
     }
@@ -737,7 +764,37 @@ class World3D {
 
         this.canvas.addEventListener('mouseup', (e) => this.onMouseUp(e));
         this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
+        this.canvas.addEventListener('contextmenu', (e) => this.onRightClick(e));
         window.addEventListener('resize', () => this.onResize());
+    }
+
+    onRightClick(event) {
+        event.preventDefault();
+
+        const rect = this.canvas.getBoundingClientRect();
+        this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+        this.raycaster.setFromCamera(this.mouse, this.camera);
+
+        // Check robots
+        const robotMeshes = [];
+        this.robots.forEach(robot => {
+            robot.traverse(child => {
+                if (child.isMesh) robotMeshes.push(child);
+            });
+        });
+
+        const intersects = this.raycaster.intersectObjects(robotMeshes, false);
+        if (intersects.length > 0) {
+            let obj = intersects[0].object;
+            while (obj.parent && !obj.userData.sessionId) {
+                obj = obj.parent;
+            }
+            if (obj.userData.sessionId) {
+                this.showRadialMenu(event.clientX, event.clientY, obj.userData.sessionId);
+            }
+        }
     }
 
     onMouseUp(event) {
@@ -792,14 +849,14 @@ class World3D {
             }
         }
 
-        // Check empty parcels
+        // Check empty parcels - create pending session
         const emptyMeshes = Array.from(this.emptyParcels.values());
         intersects = this.raycaster.intersectObjects(emptyMeshes, false);
         if (intersects.length > 0) {
             const parcel = intersects[0].object;
-            if (parcel.userData.isEmpty && this.onCreateSession) {
+            if (parcel.userData.isEmpty) {
                 const { q, r } = parcel.userData;
-                this.onCreateSession(q, r);
+                this.createPendingSession(q, r);
             }
         }
     }
@@ -908,6 +965,32 @@ class World3D {
 
         this.controls.update();
 
+        // Update pending session buttons position
+        if (this.pendingSession) {
+            this.updatePendingButtons();
+            // Animate ghost robot
+            const ghost = this.pendingSession.robot;
+            if (ghost && ghost.children[2]) {
+                ghost.children[2].position.y = 1.5 + Math.sin(elapsed * 3) * 0.1;
+            }
+        }
+
+        // Make labels face camera (billboard effect)
+        this.parcels.forEach(parcel => {
+            const label = parcel.userData.label;
+            if (label) {
+                // Get camera direction projected on XZ plane
+                const cameraDir = new THREE.Vector3();
+                this.camera.getWorldDirection(cameraDir);
+
+                // Calculate angle to face camera
+                const angle = Math.atan2(cameraDir.x, cameraDir.z);
+
+                // Tilt the label to face camera (mix of flat and upright)
+                label.rotation.set(-Math.PI / 3, angle + Math.PI, 0, 'YXZ');
+            }
+        });
+
         // Animate clouds
         this.clouds.forEach(cloud => {
             cloud.position.x += cloud.userData.speed;
@@ -988,5 +1071,210 @@ class World3D {
         this.isActive = false;
         this.controls.dispose();
         this.renderer.dispose();
+    }
+
+    // Radial menu setup
+    setupRadialMenu() {
+        // Hide radial menu on click outside
+        document.addEventListener('click', (e) => {
+            if (!this.radialMenu.contains(e.target)) {
+                this.hideRadialMenu();
+            }
+        });
+
+        // Handle radial menu actions
+        this.radialMenu.querySelectorAll('.radial-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = item.dataset.action;
+                this.handleRadialAction(action, this.radialSessionId);
+                this.hideRadialMenu();
+            });
+        });
+    }
+
+    showRadialMenu(x, y, sessionId) {
+        this.radialSessionId = sessionId;
+        this.radialMenu.style.left = x + 'px';
+        this.radialMenu.style.top = y + 'px';
+        this.radialMenu.classList.add('active');
+    }
+
+    hideRadialMenu() {
+        this.radialMenu.classList.remove('active');
+        this.radialSessionId = null;
+    }
+
+    handleRadialAction(action, sessionId) {
+        switch (action) {
+            case 'open':
+                if (this.onSessionClick) this.onSessionClick(sessionId);
+                break;
+            case 'delete':
+                if (this.onDeleteSession) this.onDeleteSession(sessionId);
+                break;
+            case 'restart':
+                if (this.onRestartSession) this.onRestartSession(sessionId);
+                break;
+            case 'experiment':
+                if (this.onExperimentSession) this.onExperimentSession(sessionId);
+                break;
+            case 'customize':
+                if (this.onCustomizeSession) this.onCustomizeSession(sessionId);
+                break;
+        }
+    }
+
+    // Pending session setup
+    setupPendingSession() {
+        const confirmBtn = document.getElementById('pending-confirm');
+        const cancelBtn = document.getElementById('pending-cancel');
+
+        confirmBtn.addEventListener('click', () => {
+            if (this.pendingSession && this.onCreateSession) {
+                this.onCreateSession(this.pendingSession.q, this.pendingSession.r);
+            }
+            this.cancelPendingSession();
+        });
+
+        cancelBtn.addEventListener('click', () => {
+            this.cancelPendingSession();
+        });
+    }
+
+    createPendingSession(q, r) {
+        // Remove previous pending if exists
+        this.cancelPendingSession();
+
+        // Create ghost parcel
+        const group = new THREE.Group();
+        const geometry = this.createParcelGeometry();
+        const material = new THREE.MeshStandardMaterial({
+            color: this.parcelColor,
+            roughness: 0.8,
+            flatShading: true,
+            transparent: true,
+            opacity: 0.5
+        });
+
+        const parcel = new THREE.Mesh(geometry, material);
+        parcel.rotation.x = -Math.PI / 2;
+        group.add(parcel);
+
+        // Ghost robot
+        const robot = this.createGhostRobot();
+        robot.position.y = this.hexHeight;
+        group.add(robot);
+
+        const pos = this.hexToWorld(q, r);
+        group.position.set(pos.x, 0, pos.z);
+
+        this.scene.add(group);
+
+        this.pendingSession = { q, r, group, robot };
+
+        // Position confirm/cancel buttons
+        this.updatePendingButtons();
+    }
+
+    createGhostRobot() {
+        const robot = new THREE.Group();
+        const color = 0xaaaaaa;
+
+        // Body
+        const bodyGeo = new THREE.BoxGeometry(0.5, 0.6, 0.4);
+        const bodyMat = new THREE.MeshStandardMaterial({
+            color: color,
+            roughness: 0.3,
+            transparent: true,
+            opacity: 0.6
+        });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.y = 0.6;
+        robot.add(body);
+
+        // Head
+        const headGeo = new THREE.BoxGeometry(0.45, 0.35, 0.35);
+        const headMat = new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+            roughness: 0.3,
+            transparent: true,
+            opacity: 0.6
+        });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.y = 1.1;
+        robot.add(head);
+
+        // Question mark indicator
+        const qGeo = new THREE.SphereGeometry(0.15, 8, 6);
+        const qMat = new THREE.MeshBasicMaterial({ color: 0x6366f1 });
+        const q = new THREE.Mesh(qGeo, qMat);
+        q.position.y = 1.5;
+        robot.add(q);
+
+        return robot;
+    }
+
+    updatePendingButtons() {
+        if (!this.pendingSession) return;
+
+        const confirmBtn = document.getElementById('pending-confirm');
+        const cancelBtn = document.getElementById('pending-cancel');
+
+        // Project 3D position to screen
+        const pos = new THREE.Vector3();
+        this.pendingSession.group.getWorldPosition(pos);
+        pos.y += 2;
+
+        const projected = pos.project(this.camera);
+        const x = (projected.x * 0.5 + 0.5) * this.canvas.clientWidth;
+        const y = (-projected.y * 0.5 + 0.5) * this.canvas.clientHeight + 60; // +60 for header
+
+        confirmBtn.style.left = x + 'px';
+        confirmBtn.style.top = (y - 20) + 'px';
+        confirmBtn.classList.remove('hidden');
+
+        cancelBtn.style.left = x + 'px';
+        cancelBtn.style.top = (y + 25) + 'px';
+        cancelBtn.classList.remove('hidden');
+    }
+
+    cancelPendingSession() {
+        if (this.pendingSession) {
+            this.scene.remove(this.pendingSession.group);
+            this.pendingSession = null;
+        }
+
+        document.getElementById('pending-confirm').classList.add('hidden');
+        document.getElementById('pending-cancel').classList.add('hidden');
+    }
+
+    saveCameraPosition() {
+        const data = {
+            position: {
+                x: this.camera.position.x,
+                y: this.camera.position.y,
+                z: this.camera.position.z
+            },
+            target: {
+                x: this.controls.target.x,
+                y: this.controls.target.y,
+                z: this.controls.target.z
+            }
+        };
+        localStorage.setItem('claudex-camera', JSON.stringify(data));
+    }
+
+    restoreCameraPosition() {
+        const saved = localStorage.getItem('claudex-camera');
+        if (saved) {
+            try {
+                const data = JSON.parse(saved);
+                this.camera.position.set(data.position.x, data.position.y, data.position.z);
+                this.controls.target.set(data.target.x, data.target.y, data.target.z);
+            } catch (e) {
+                // Ignore parse errors
+            }
+        }
     }
 }

@@ -31,6 +31,42 @@
         <div id="world-3d" class="hidden">
             <canvas id="canvas-3d"></canvas>
             <div id="session-tooltip" class="session-tooltip hidden"></div>
+
+            <!-- Radial Menu -->
+            <div id="radial-menu" class="radial-menu">
+                <div class="radial-menu-center">
+                    <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none">
+                        <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                </div>
+                <div class="radial-item" data-action="open" style="--angle: 0deg">
+                    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+                    <span class="radial-item-label" style="top: -30px">Open</span>
+                </div>
+                <div class="radial-item" data-action="customize" style="--angle: 72deg">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    <span class="radial-item-label" style="right: -60px">Customize</span>
+                </div>
+                <div class="radial-item" data-action="restart" style="--angle: 144deg">
+                    <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                    <span class="radial-item-label" style="right: -55px">Restart</span>
+                </div>
+                <div class="radial-item" data-action="experiment" style="--angle: 216deg">
+                    <svg viewBox="0 0 24 24"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+                    <span class="radial-item-label" style="left: -65px">Experiment</span>
+                </div>
+                <div class="radial-item danger" data-action="delete" style="--angle: 288deg">
+                    <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    <span class="radial-item-label" style="left: -50px">Delete</span>
+                </div>
+            </div>
+
+            <!-- Pending session buttons -->
+            <button id="pending-confirm" class="pending-confirm hidden">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="20 6 9 17 4 12"/></svg>
+                Create
+            </button>
+            <button id="pending-cancel" class="pending-cancel hidden">Cancel</button>
         </div>
 
         <!-- Modal for expanded session -->

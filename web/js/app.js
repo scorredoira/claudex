@@ -380,6 +380,19 @@ class Claudex {
         }
     }
 
+    confirmDelete(sessionId) {
+        const session = this.sessions.get(sessionId);
+        const name = session?.name || sessionId;
+        this.showConfirm(`Delete "${name}"? This action cannot be undone.`, () => {
+            this.deleteSession(sessionId);
+        });
+    }
+
+    showExperimentDialog(sessionId) {
+        // For now, create directly. Could show a dialog for branch name in future.
+        this.createExperiment(sessionId);
+    }
+
     async deleteSession(sessionId) {
         try {
             await fetch(`/api/sessions/${sessionId}`, {
@@ -583,23 +596,27 @@ class Claudex {
         document.getElementById('modal').classList.add('hidden');
     }
 
-    restartSession() {
-        if (!this.activeSessionId || !this.modalTerminal) return;
+    restartSession(sessionId = null) {
+        const targetId = sessionId || this.activeSessionId;
+        if (!targetId) return;
 
-        const sessionId = this.activeSessionId;
-
-        // Clear terminal
-        this.modalTerminal.clear();
-
-        // Send restart message
-        this.ws.send(JSON.stringify({
-            type: 'restart',
-            session_id: sessionId,
-            data: { rows: this.modalTerminal.rows, cols: this.modalTerminal.cols }
-        }));
-
-        // Hide restart button
-        document.getElementById('modal-restart').classList.add('hidden');
+        // If restarting the currently open session
+        if (targetId === this.activeSessionId && this.modalTerminal) {
+            this.modalTerminal.clear();
+            this.ws.send(JSON.stringify({
+                type: 'restart',
+                session_id: targetId,
+                data: { rows: this.modalTerminal.rows, cols: this.modalTerminal.cols }
+            }));
+            document.getElementById('modal-restart').classList.add('hidden');
+        } else {
+            // Restart a session that's not currently open
+            this.ws.send(JSON.stringify({
+                type: 'restart',
+                session_id: targetId,
+                data: { rows: 24, cols: 80 }
+            }));
+        }
     }
 
     sendInput(sessionId, data) {
@@ -731,8 +748,27 @@ class Claudex {
             }
         );
 
+        // Connect radial menu callbacks
+        this.world3d.onDeleteSession = (sessionId) => {
+            this.confirmDelete(sessionId);
+        };
+        this.world3d.onRestartSession = async (sessionId) => {
+            await this.restartSession(sessionId);
+        };
+        this.world3d.onExperimentSession = (sessionId) => {
+            this.showExperimentDialog(sessionId);
+        };
+        this.world3d.onCustomizeSession = (sessionId) => {
+            this.showCustomizePanel(sessionId);
+        };
+
         // Sync current sessions
         this.world3d.updateSessions(this.sessions);
+    }
+
+    showCustomizePanel(sessionId) {
+        // TODO: implement customize panel
+        console.log('Customize session:', sessionId);
     }
 
     async createSessionAt3D(q, r) {

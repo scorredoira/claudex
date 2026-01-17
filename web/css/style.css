@@ -578,3 +578,152 @@ header h1 {
 #sessions-grid.hidden {
     display: none;
 }
+
+/* Radial Menu */
+.radial-menu {
+    position: fixed;
+    pointer-events: none;
+    z-index: 500;
+}
+
+.radial-menu.active {
+    pointer-events: auto;
+}
+
+.radial-menu-center {
+    position: absolute;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: var(--bg-card);
+    border: 2px solid var(--accent);
+    transform: translate(-50%, -50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    opacity: 0;
+    transition: opacity 0.15s, transform 0.15s;
+}
+
+.radial-menu.active .radial-menu-center {
+    opacity: 1;
+}
+
+.radial-item {
+    position: absolute;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--bg-card);
+    border: 2px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transform: translate(-50%, -50%) scale(0);
+    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275),
+                background 0.15s, border-color 0.15s;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+.radial-menu.active .radial-item {
+    transform: translate(-50%, -50%) scale(1);
+}
+
+.radial-item:nth-child(2) { left: 0px; top: -70px; }
+.radial-item:nth-child(3) { left: 67px; top: -22px; }
+.radial-item:nth-child(4) { left: 41px; top: 57px; }
+.radial-item:nth-child(5) { left: -41px; top: 57px; }
+.radial-item:nth-child(6) { left: -67px; top: -22px; }
+
+.radial-item:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.radial-item:hover svg {
+    stroke: white;
+}
+
+.radial-item svg {
+    width: 22px;
+    height: 22px;
+    stroke: var(--text-primary);
+    stroke-width: 2;
+    fill: none;
+}
+
+.radial-item.danger:hover {
+    background: var(--status-waiting);
+    border-color: var(--status-waiting);
+}
+
+.radial-item-label {
+    position: absolute;
+    white-space: nowrap;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.radial-item:hover .radial-item-label {
+    opacity: 1;
+}
+
+/* Pending session ghost effect */
+.robot-pending {
+    opacity: 0.5;
+    animation: pulse-pending 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-pending {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.7; }
+}
+
+/* Confirm button for pending session */
+.pending-confirm {
+    position: fixed;
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 0.6rem 1.2rem;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.pending-confirm:hover {
+    transform: translate(-50%, -50%) scale(1.05);
+    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+}
+
+.pending-cancel {
+    position: fixed;
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    padding: 0.4rem 0.8rem;
+    border-radius: 15px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transform: translate(-50%, -50%);
+    z-index: 100;
+}
+
+.pending-cancel:hover {
+    border-color: var(--status-waiting);
+    color: var(--status-waiting);
+}
