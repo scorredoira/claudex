@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claudex - Claude Code Session Manager</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Claudex</h1>
+            <div class="header-actions">
+                <button id="theme-toggle" class="theme-toggle">
+                    <span class="theme-icon">☀️</span>
+                    <span class="theme-label">Dark</span>
+                </button>
+                <button id="new-session" class="btn-primary">+ New Session</button>
+            </div>
+        </header>
+
+        <main id="sessions-grid">
+            <!-- Session cards will be inserted here -->
+        </main>
+
+        <!-- Modal for expanded session -->
+        <div id="modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <input type="text" id="modal-title" value="Session" />
+                    <div class="modal-actions">
+                        <span id="modal-status" class="status-badge">idle</span>
+                        <button id="modal-restart" class="btn-secondary hidden">Restart</button>
+                        <button id="modal-close" class="btn-icon">&times;</button>
+                    </div>
+                </div>
+                <div id="modal-terminal"></div>
+            </div>
+        </div>
+
+        <!-- New session dialog -->
+        <div id="new-session-dialog" class="modal hidden">
+            <div class="dialog-content">
+                <h2>New Session</h2>
+                <form id="new-session-form">
+                    <label>
+                        Name:
+                        <input type="text" id="session-name" placeholder="My Session" required>
+                    </label>
+                    <div class="dialog-actions">
+                        <button type="button" id="cancel-new-session" class="btn-secondary">Cancel</button>
+                        <button type="submit" class="btn-primary">Create</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Confirm delete dialog -->
+        <div id="confirm-dialog" class="modal hidden">
+            <div class="confirm-dialog">
+                <h3>Delete session?</h3>
+                <p id="confirm-message">This action cannot be undone.</p>
+                <div class="dialog-actions">
+                    <button type="button" id="confirm-cancel" class="btn-secondary">Cancel</button>
+                    <button type="button" id="confirm-ok" class="btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-unicode11@0.6.0/lib/xterm-addon-unicode11.min.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
