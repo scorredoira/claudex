@@ -1228,25 +1228,7 @@ class Claudex {
         };
 
         // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => {
-            const dialog = document.getElementById('new-session-dialog');
-            const modal = document.getElementById('modal');
-
-            // Escape closes dialogs
-            if (e.key === 'Escape' && !e.shiftKey) {
-                if (!dialog.classList.contains('hidden')) {
-                    dialog.classList.add('hidden');
-                }
-            }
-
-            // Shift+Escape closes session modal
-            if (e.key === 'Escape' && e.shiftKey) {
-                if (!modal.classList.contains('hidden')) {
-                    e.preventDefault();
-                    this.closeModal();
-                }
-            }
-        });
+        this.setupKeyboardShortcuts();
 
         // Request notification permission
         if ('Notification' in window && Notification.permission === 'default') {
@@ -1270,6 +1252,242 @@ class Claudex {
         this.panes.forEach(pane => {
             pane.terminal.options.theme = this.getTerminalTheme(isDark);
         });
+    }
+
+    // Keyboard shortcuts system
+    getShortcutsList() {
+        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+        const cmd = isMac ? 'Cmd' : 'Ctrl';
+
+        return [
+            { category: 'General', shortcuts: [
+                { keys: `F1`, action: 'Show shortcuts help', id: 'showHelp' },
+                { keys: `Shift+Esc`, action: 'Close session modal', id: 'closeModal' },
+                { keys: `Esc`, action: 'Close dialogs', id: 'closeDialog' },
+            ]},
+            { category: 'Pane Navigation', shortcuts: [
+                { keys: `${cmd}+1-9`, action: 'Switch to pane N', id: 'switchPane' },
+                { keys: `${cmd}+Arrow`, action: 'Navigate between panes', id: 'navigatePane' },
+                { keys: `${cmd}+]`, action: 'Next pane', id: 'nextPane' },
+                { keys: `${cmd}+[`, action: 'Previous pane', id: 'prevPane' },
+            ]},
+            { category: '3D View', shortcuts: [
+                { keys: 'Space', action: 'Reset camera view', id: 'resetCamera' },
+                { keys: 'Cmd (hold)', action: 'Show robot names', id: 'showLabels' },
+            ]},
+            { category: 'Terminal', shortcuts: [
+                { keys: 'Shift+Enter', action: 'Send special Enter', id: 'shiftEnter' },
+            ]},
+        ];
+    }
+
+    setupKeyboardShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            const dialog = document.getElementById('new-session-dialog');
+            const modal = document.getElementById('modal');
+            const shortcutsModal = document.getElementById('shortcuts-modal');
+            const modalOpen = !modal.classList.contains('hidden');
+            const shortcutsOpen = shortcutsModal && !shortcutsModal.classList.contains('hidden');
+
+            // F1 - Show shortcuts help
+            if (e.key === 'F1') {
+                e.preventDefault();
+                this.toggleShortcutsModal();
+                return;
+            }
+
+            // Escape closes shortcuts modal first
+            if (e.key === 'Escape' && shortcutsOpen) {
+                e.preventDefault();
+                this.hideShortcutsModal();
+                return;
+            }
+
+            // Escape closes dialogs
+            if (e.key === 'Escape' && !e.shiftKey) {
+                if (!dialog.classList.contains('hidden')) {
+                    dialog.classList.add('hidden');
+                }
+            }
+
+            // Shift+Escape closes session modal
+            if (e.key === 'Escape' && e.shiftKey) {
+                if (modalOpen) {
+                    e.preventDefault();
+                    this.closeModal();
+                }
+            }
+
+            // Pane navigation shortcuts (only when modal is open)
+            if (modalOpen && (e.metaKey || e.ctrlKey)) {
+                // Cmd+1-9 - Switch to pane by number
+                const num = parseInt(e.key);
+                if (num >= 1 && num <= 9) {
+                    e.preventDefault();
+                    this.switchToPaneByIndex(num - 1);
+                    return;
+                }
+
+                // Cmd+] - Next pane
+                if (e.key === ']') {
+                    e.preventDefault();
+                    this.navigateToNextPane(1);
+                    return;
+                }
+
+                // Cmd+[ - Previous pane
+                if (e.key === '[') {
+                    e.preventDefault();
+                    this.navigateToNextPane(-1);
+                    return;
+                }
+
+                // Cmd+Arrow - Navigate between panes
+                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                    e.preventDefault();
+                    this.navigatePaneByDirection(e.key);
+                    return;
+                }
+            }
+        });
+    }
+
+    switchToPaneByIndex(index) {
+        const paneIds = Array.from(this.panes.keys());
+        if (index >= 0 && index < paneIds.length) {
+            this.setActivePane(paneIds[index]);
+        }
+    }
+
+    navigateToNextPane(direction) {
+        const paneIds = Array.from(this.panes.keys());
+        if (paneIds.length < 2) return;
+
+        const currentIndex = paneIds.indexOf(this.activePaneId);
+        let newIndex = currentIndex + direction;
+
+        // Wrap around
+        if (newIndex < 0) newIndex = paneIds.length - 1;
+        if (newIndex >= paneIds.length) newIndex = 0;
+
+        this.setActivePane(paneIds[newIndex]);
+    }
+
+    navigatePaneByDirection(arrowKey) {
+        const panes = Array.from(this.panes.values());
+        if (panes.length < 2) return;
+
+        const activePane = this.panes.get(this.activePaneId);
+        if (!activePane) return;
+
+        const activeRect = activePane.element.getBoundingClientRect();
+        const activeCenterX = activeRect.left + activeRect.width / 2;
+        const activeCenterY = activeRect.top + activeRect.height / 2;
+
+        let bestPane = null;
+        let bestScore = Infinity;
+
+        for (const pane of panes) {
+            if (pane.paneId === this.activePaneId) continue;
+
+            const rect = pane.element.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+
+            const dx = centerX - activeCenterX;
+            const dy = centerY - activeCenterY;
+
+            let score = Infinity;
+            const threshold = 20; // Minimum distance in the right direction
+
+            switch (arrowKey) {
+                case 'ArrowLeft':
+                    if (dx < -threshold) score = Math.abs(dy) - dx;
+                    break;
+                case 'ArrowRight':
+                    if (dx > threshold) score = Math.abs(dy) + dx;
+                    break;
+                case 'ArrowUp':
+                    if (dy < -threshold) score = Math.abs(dx) - dy;
+                    break;
+                case 'ArrowDown':
+                    if (dy > threshold) score = Math.abs(dx) + dy;
+                    break;
+            }
+
+            if (score < bestScore) {
+                bestScore = score;
+                bestPane = pane;
+            }
+        }
+
+        if (bestPane) {
+            this.setActivePane(bestPane.paneId);
+        }
+    }
+
+    toggleShortcutsModal() {
+        const modal = document.getElementById('shortcuts-modal');
+        if (modal) {
+            modal.classList.toggle('hidden');
+        } else {
+            this.showShortcutsModal();
+        }
+    }
+
+    showShortcutsModal() {
+        let modal = document.getElementById('shortcuts-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'shortcuts-modal';
+            modal.className = 'shortcuts-modal';
+            document.body.appendChild(modal);
+        }
+
+        const shortcuts = this.getShortcutsList();
+
+        modal.innerHTML = `
+            <div class="shortcuts-content">
+                <div class="shortcuts-header">
+                    <h2>Keyboard Shortcuts</h2>
+                    <button class="shortcuts-close">&times;</button>
+                </div>
+                <div class="shortcuts-body">
+                    ${shortcuts.map(cat => `
+                        <div class="shortcuts-category">
+                            <h3>${cat.category}</h3>
+                            <div class="shortcuts-list">
+                                ${cat.shortcuts.map(s => `
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-keys">${this.formatKeys(s.keys)}</span>
+                                        <span class="shortcut-action">${s.action}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+
+        modal.classList.remove('hidden');
+
+        modal.querySelector('.shortcuts-close').onclick = () => this.hideShortcutsModal();
+        modal.onclick = (e) => {
+            if (e.target === modal) this.hideShortcutsModal();
+        };
+    }
+
+    hideShortcutsModal() {
+        const modal = document.getElementById('shortcuts-modal');
+        if (modal) modal.classList.add('hidden');
+    }
+
+    formatKeys(keys) {
+        return keys
+            .split('+')
+            .map(k => `<kbd>${k}</kbd>`)
+            .join(' + ');
     }
 
     // 3D View methods
