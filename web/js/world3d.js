@@ -1216,23 +1216,49 @@ class World3D {
     }
 
     resetCameraView() {
-        // Calculate center of all parcels
-        let centerX = 0, centerZ = 0;
+        // Calculate bounding box of all parcels
+        let minX = Infinity, maxX = -Infinity;
+        let minZ = Infinity, maxZ = -Infinity;
         let count = 0;
 
         this.parcels.forEach(parcel => {
-            centerX += parcel.position.x;
-            centerZ += parcel.position.z;
+            minX = Math.min(minX, parcel.position.x);
+            maxX = Math.max(maxX, parcel.position.x);
+            minZ = Math.min(minZ, parcel.position.z);
+            maxZ = Math.max(maxZ, parcel.position.z);
             count++;
         });
 
-        if (count > 0) {
-            centerX /= count;
-            centerZ /= count;
+        if (count === 0) {
+            // No parcels, default view
+            this.camera.position.set(8, 10, 8);
+            this.controls.target.set(0, 0, 0);
+            this.controls.update();
+            this.saveCameraPosition();
+            return;
         }
 
-        // Frontal, slightly elevated view - centered on parcels
-        this.camera.position.set(centerX, 10, centerZ + 14);
+        // Calculate center and size
+        const centerX = (minX + maxX) / 2;
+        const centerZ = (minZ + maxZ) / 2;
+        const sizeX = maxX - minX + this.hexSize * 2;
+        const sizeZ = maxZ - minZ + this.hexSize * 2;
+        const maxSize = Math.max(sizeX, sizeZ);
+
+        // Calculate camera distance based on content size
+        // Use FOV to determine proper distance
+        const fov = this.camera.fov * (Math.PI / 180);
+        const baseDistance = 14;
+        const distance = Math.max(baseDistance, maxSize / (2 * Math.tan(fov / 2)) * 0.8);
+
+        // Clamp distance to controls limits
+        const clampedDistance = Math.min(distance, this.controls.maxDistance);
+
+        // Position camera to look at center from front
+        const cameraY = Math.min(clampedDistance * 0.7, 15);
+        const cameraZ = centerZ + clampedDistance;
+
+        this.camera.position.set(centerX, cameraY, cameraZ);
         this.controls.target.set(centerX, 0.5, centerZ);
         this.controls.update();
         this.saveCameraPosition();
