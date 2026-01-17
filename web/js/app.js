@@ -10,11 +10,13 @@ class Claudex {
         this.clientState = null;
         this._saveStateTimeout = null;
 
-        // Multi-pane support
-        this.panes = new Map(); // paneId -> { terminal, fitAddon, element, paneId }
+        // Multi-pane support with nested splits
+        this.panes = new Map(); // paneId -> { terminal, fitAddon, element, paneId, sessionId }
         this.activePaneId = null;
-        this.splitInstance = null;
+        this.splitInstances = []; // Array of Split.js instances for cleanup
         this.paneCounter = 0;
+        // Split tree: { type: 'pane', paneId } or { type: 'split', direction, children: [node, node] }
+        this.splitTree = null;
 
         this.init();
     }
@@ -569,9 +571,8 @@ class Claudex {
         this.scrollToBottomPending = true;
     }
 
-    createPane(sessionId) {
+    createPane(sessionId, addToContainer = true) {
         const paneId = `pane-${++this.paneCounter}`;
-        const panesContainer = document.getElementById('modal-panes');
 
         // Create pane element
         const paneEl = document.createElement('div');
@@ -593,7 +594,11 @@ class Claudex {
         termContainer.className = 'terminal-container';
         paneEl.appendChild(termContainer);
 
-        panesContainer.appendChild(paneEl);
+        // Only add to container if requested (for initial pane)
+        if (addToContainer) {
+            const panesContainer = document.getElementById('modal-panes');
+            panesContainer.appendChild(paneEl);
+        }
 
         // Create terminal
         const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -696,20 +701,23 @@ class Claudex {
             session_id: pane.sessionId
         }));
 
-        // Cleanup UI
+        // Cleanup
         if (pane.resizeObserver) pane.resizeObserver.disconnect();
         pane.terminal.dispose();
-        pane.element.remove();
         this.panes.delete(paneId);
 
         // If no panes left, close modal
         if (this.panes.size === 0) {
+            this.splitTree = null;
             this.closeModal();
             return;
         }
 
-        // Rebuild split if needed
-        this.rebuildSplit();
+        // Update split tree - remove this pane and collapse single-child splits
+        this.removePaneFromTree(paneId);
+
+        // Re-render
+        this.renderSplitTree();
 
         // Set new active pane
         if (this.activePaneId === paneId) {
@@ -718,11 +726,65 @@ class Claudex {
         }
     }
 
+    // Remove pane from tree and collapse single-child splits
+    removePaneFromTree(paneId) {
+        if (!this.splitTree) return;
+
+        // If root is the pane being removed
+        if (this.splitTree.type === 'pane' && this.splitTree.paneId === paneId) {
+            this.splitTree = null;
+            return;
+        }
+
+        // Recursive function to remove pane and collapse
+        const removeFromNode = (node, parent, childIndex) => {
+            if (node.type === 'pane') {
+                return node.paneId === paneId;
+            }
+
+            if (node.type === 'split') {
+                for (let i = 0; i < node.children.length; i++) {
+                    if (node.children[i].type === 'pane' && node.children[i].paneId === paneId) {
+                        // Remove this child
+                        node.children.splice(i, 1);
+
+                        // If only one child left, collapse this split
+                        if (node.children.length === 1) {
+                            if (parent) {
+                                parent.children[childIndex] = node.children[0];
+                            } else {
+                                // This is the root
+                                this.splitTree = node.children[0];
+                            }
+                        }
+                        return true;
+                    } else if (removeFromNode(node.children[i], node, i)) {
+                        // Child was modified, check if we need to collapse
+                        if (node.children.length === 1) {
+                            if (parent) {
+                                parent.children[childIndex] = node.children[0];
+                            } else {
+                                this.splitTree = node.children[0];
+                            }
+                        }
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+
+        removeFromNode(this.splitTree, null, 0);
+    }
+
     async splitPane(direction) {
-        if (!this.activeSessionId) return;
+        if (!this.activePaneId) return;
+
+        const activePane = this.panes.get(this.activePaneId);
+        if (!activePane) return;
 
         // Get the original session to copy its directory
-        const originalSession = this.sessions.get(this.activeSessionId);
+        const originalSession = this.sessions.get(activePane.sessionId);
         if (!originalSession) return;
 
         // Create a new session with the same directory
@@ -741,11 +803,14 @@ class Claudex {
             const newSession = await response.json();
             this.sessions.set(newSession.id, newSession);
 
-            // Create new pane for this session
-            const newPane = this.createPane(newSession.id);
+            // Create new pane (don't add to container yet)
+            const newPane = this.createPane(newSession.id, false);
 
-            // Rebuild split layout
-            this.rebuildSplit(direction);
+            // Update split tree
+            this.updateSplitTree(this.activePaneId, newPane.paneId, direction);
+
+            // Re-render the tree
+            this.renderSplitTree();
 
             // Subscribe and start the new session
             this.ws.send(JSON.stringify({
@@ -767,43 +832,138 @@ class Claudex {
         }
     }
 
-    rebuildSplit(direction) {
-        const panesContainer = document.getElementById('modal-panes');
+    // Update split tree: replace pane node with a split containing old and new pane
+    updateSplitTree(oldPaneId, newPaneId, direction) {
+        const oldPaneNode = { type: 'pane', paneId: oldPaneId };
+        const newPaneNode = { type: 'pane', paneId: newPaneId };
 
-        // Destroy existing split
-        if (this.splitInstance) {
-            this.splitInstance.destroy();
-            this.splitInstance = null;
-        }
-
-        if (this.panes.size <= 1) {
-            panesContainer.className = '';
+        if (!this.splitTree) {
+            // First split: create root split node
+            this.splitTree = {
+                type: 'split',
+                direction: direction,
+                children: [oldPaneNode, newPaneNode]
+            };
             return;
         }
 
-        // Determine direction (use provided or default to horizontal)
-        const splitDir = direction || 'horizontal';
-        panesContainer.className = splitDir;
-
-        // Get pane elements
-        const paneEls = Array.from(this.panes.values()).map(p => p.element);
-
-        // Create split
-        this.splitInstance = Split(paneEls, {
-            direction: splitDir,
-            sizes: paneEls.map(() => 100 / paneEls.length),
-            minSize: 100,
-            gutterSize: 4,
-            onDragEnd: () => {
-                // Refit all terminals after resize
-                this.panes.forEach(pane => {
-                    pane.fitAddon.fit();
-                    if (this.activeSessionId) {
-                        this.sendResize(this.activeSessionId, pane.terminal.rows, pane.terminal.cols);
-                    }
-                });
+        // Find and replace the old pane node in the tree
+        const replaceInTree = (node) => {
+            if (node.type === 'pane') {
+                return node.paneId === oldPaneId;
             }
-        });
+            if (node.type === 'split') {
+                for (let i = 0; i < node.children.length; i++) {
+                    if (node.children[i].type === 'pane' && node.children[i].paneId === oldPaneId) {
+                        // Replace this pane with a split
+                        node.children[i] = {
+                            type: 'split',
+                            direction: direction,
+                            children: [oldPaneNode, newPaneNode]
+                        };
+                        return true;
+                    } else if (replaceInTree(node.children[i])) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+
+        // Handle case where root is the pane being split
+        if (this.splitTree.type === 'pane' && this.splitTree.paneId === oldPaneId) {
+            this.splitTree = {
+                type: 'split',
+                direction: direction,
+                children: [oldPaneNode, newPaneNode]
+            };
+        } else {
+            replaceInTree(this.splitTree);
+        }
+    }
+
+    // Render the split tree to DOM
+    renderSplitTree() {
+        const panesContainer = document.getElementById('modal-panes');
+
+        // Destroy all existing split instances
+        this.splitInstances.forEach(s => s.destroy());
+        this.splitInstances = [];
+
+        // Clear container
+        panesContainer.innerHTML = '';
+        panesContainer.className = '';
+
+        if (!this.splitTree) {
+            // No tree yet, just add single pane
+            if (this.panes.size === 1) {
+                const pane = this.panes.values().next().value;
+                panesContainer.appendChild(pane.element);
+            }
+            return;
+        }
+
+        // Recursively render tree
+        const renderNode = (node, container) => {
+            if (node.type === 'pane') {
+                const pane = this.panes.get(node.paneId);
+                if (pane) {
+                    container.appendChild(pane.element);
+                }
+                return [pane?.element];
+            }
+
+            if (node.type === 'split') {
+                // Create container for this split level
+                const splitContainer = document.createElement('div');
+                splitContainer.className = `split-container ${node.direction}`;
+                container.appendChild(splitContainer);
+
+                // Render children
+                const childElements = [];
+                node.children.forEach(child => {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'split-child';
+                    splitContainer.appendChild(wrapper);
+                    renderNode(child, wrapper);
+                    childElements.push(wrapper);
+                });
+
+                // Initialize Split.js for this level
+                if (childElements.length >= 2) {
+                    const splitInstance = Split(childElements, {
+                        direction: node.direction,
+                        sizes: childElements.map(() => 100 / childElements.length),
+                        minSize: 50,
+                        gutterSize: 4,
+                        onDragEnd: () => {
+                            // Refit all terminals after resize
+                            this.panes.forEach(pane => {
+                                pane.fitAddon.fit();
+                                this.sendResize(pane.sessionId, pane.terminal.rows, pane.terminal.cols);
+                            });
+                        }
+                    });
+                    this.splitInstances.push(splitInstance);
+                }
+
+                return childElements;
+            }
+        };
+
+        renderNode(this.splitTree, panesContainer);
+
+        // Refit all terminals after rendering
+        setTimeout(() => {
+            this.panes.forEach(pane => {
+                pane.fitAddon.fit();
+            });
+        }, 50);
+    }
+
+    // Legacy function for compatibility
+    rebuildSplit(direction) {
+        this.renderSplitTree();
     }
 
     closeModal() {
@@ -827,11 +987,10 @@ class Claudex {
         this.panes.clear();
         this.activePaneId = null;
 
-        // Cleanup split
-        if (this.splitInstance) {
-            this.splitInstance.destroy();
-            this.splitInstance = null;
-        }
+        // Cleanup all split instances
+        this.splitInstances.forEach(s => s.destroy());
+        this.splitInstances = [];
+        this.splitTree = null;
 
         this.activeSessionId = null;
         document.getElementById('modal').classList.add('hidden');
