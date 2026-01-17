@@ -817,14 +817,16 @@ class Claudex {
             panel.classList.remove('active');
         };
 
-        // Click outside to close
-        document.addEventListener('click', (e) => {
-            if (panel.classList.contains('active') &&
-                !panel.contains(e.target) &&
-                !e.target.closest('.radial-menu')) {
-                panel.classList.remove('active');
-            }
-        });
+        // Click on canvas closes panel
+        const canvas = document.getElementById('canvas-3d');
+        if (canvas) {
+            canvas.addEventListener('click', () => {
+                if (panel.classList.contains('active')) {
+                    panel.classList.remove('active');
+                    this.customizingSessionId = null;
+                }
+            });
+        }
 
         // Name change
         document.getElementById('customize-name').onchange = (e) => {

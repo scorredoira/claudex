@@ -592,7 +592,7 @@ header h1 {
 
 .radial-menu-info {
     position: absolute;
-    top: -160px;
+    top: -210px;
     left: 50%;
     transform: translateX(-50%);
     background: var(--bg-card);
@@ -674,12 +674,12 @@ header h1 {
     transform: translate(-50%, -50%) scale(1);
 }
 
-/* 5 items at 72° intervals, radius 70px, starting from top */
-.radial-item:nth-child(3) { left: 0px; top: -70px; }           /* Open - top */
-.radial-item:nth-child(4) { left: 67px; top: -22px; }          /* Customize - top right */
-.radial-item:nth-child(5) { left: 41px; top: 57px; }           /* Restart - bottom right */
-.radial-item:nth-child(6) { left: -41px; top: 57px; }          /* Experiment - bottom left */
-.radial-item:nth-child(7) { left: -67px; top: -22px; }         /* Delete - top left */
+/* 4 items equally spaced in arc at top, radius 95px */
+/* Arc from 150° to 30°, so all buttons are above center with equal spacing */
+.radial-item:nth-child(3) { left: -82px; top: -48px; }         /* Experiment - upper left */
+.radial-item:nth-child(4) { left: -32px; top: -89px; }         /* Customize - top left */
+.radial-item:nth-child(5) { left: 32px; top: -89px; }          /* Restart - top right */
+.radial-item:nth-child(6) { left: 82px; top: -48px; }          /* Delete - upper right */
 
 .radial-item:hover {
     background: var(--accent);

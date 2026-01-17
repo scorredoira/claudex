@@ -1092,9 +1092,24 @@ class World3D {
     }
 
     resetCameraView() {
-        // Frontal, slightly elevated view - centered on the world
-        this.camera.position.set(0, 10, 14);
-        this.controls.target.set(0, 0.5, 0);
+        // Calculate center of all parcels
+        let centerX = 0, centerZ = 0;
+        let count = 0;
+
+        this.parcels.forEach(parcel => {
+            centerX += parcel.position.x;
+            centerZ += parcel.position.z;
+            count++;
+        });
+
+        if (count > 0) {
+            centerX /= count;
+            centerZ /= count;
+        }
+
+        // Frontal, slightly elevated view - centered on parcels
+        this.camera.position.set(centerX, 10, centerZ + 14);
+        this.controls.target.set(centerX, 0.5, centerZ);
         this.controls.update();
         this.saveCameraPosition();
     }
