@@ -749,8 +749,8 @@ class Claudex {
                 }
             }
 
-            // Cmd+Escape (Mac) or Ctrl+Escape (Win/Linux) closes session modal
-            if (e.key === 'Escape' && (e.metaKey || e.ctrlKey)) {
+            // Cmd+W (Mac) or Ctrl+W (Win/Linux) closes session modal
+            if (e.key === 'w' && (e.metaKey || e.ctrlKey)) {
                 if (!modal.classList.contains('hidden')) {
                     e.preventDefault();
                     this.closeModal();
