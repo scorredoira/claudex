@@ -728,7 +728,7 @@ class Claudex {
         terminal.attachCustomKeyEventHandler((event) => {
             if (event.type === 'keydown') {
                 if (event.key === 'Enter' && event.shiftKey) {
-                    this.sendInput(sessionId, '\x1b[13;2u');
+                    this.sendInput(sessionId, '\n');
                     return false;
                 }
                 if (event.key === 'Escape' && event.shiftKey) {
