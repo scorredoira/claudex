@@ -31,7 +31,6 @@ var upgrader = websocket.Upgrader{
 type Message struct {
 	Type      string          `json:"type"`
 	SessionID string          `json:"session_id,omitempty"`
-	PaneID    string          `json:"pane_id,omitempty"`
 	Data      json.RawMessage `json:"data,omitempty"`
 }
 
@@ -39,7 +38,6 @@ type Message struct {
 type OutputMessage struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
-	PaneID    string `json:"pane_id,omitempty"`
 	Data      string `json:"data"` // Base64 encoded for binary safety
 }
 
@@ -47,7 +45,6 @@ type OutputMessage struct {
 type StatusMessage struct {
 	Type      string         `json:"type"`
 	SessionID string         `json:"session_id"`
-	PaneID    string         `json:"pane_id,omitempty"`
 	Status    session.Status `json:"status"`
 }
 
@@ -120,7 +117,7 @@ func (h *Handler) HandleConnection(w http.ResponseWriter, r *http.Request) {
 
 // handleMessage processes incoming WebSocket messages
 func (h *Handler) handleMessage(conn *websocket.Conn, msg Message) {
-	log.Printf("[WS] Received message: type=%s session_id=%s pane_id=%s", msg.Type, msg.SessionID, msg.PaneID)
+	log.Printf("[WS] Received message: type=%s session_id=%s", msg.Type, msg.SessionID)
 	switch msg.Type {
 	case "subscribe":
 		h.handleSubscribe(conn, msg.SessionID)
@@ -129,22 +126,16 @@ func (h *Handler) handleMessage(conn *websocket.Conn, msg Message) {
 		h.handleUnsubscribe(conn, msg.SessionID)
 
 	case "input":
-		h.handleInput(msg.SessionID, msg.PaneID, msg.Data)
+		h.handleInput(msg.SessionID, msg.Data)
 
 	case "resize":
-		h.handleResize(msg.SessionID, msg.PaneID, msg.Data)
-
-	case "start_pane":
-		h.handleStartPane(conn, msg.SessionID, msg.PaneID, msg.Data)
+		h.handleResize(msg.SessionID, msg.Data)
 
 	case "start":
 		h.handleStart(conn, msg.SessionID, msg.Data)
 
 	case "stop":
 		h.handleStop(msg.SessionID)
-
-	case "stop_pane":
-		h.handleStopPane(msg.SessionID, msg.PaneID)
 
 	case "restart":
 		h.handleRestart(conn, msg.SessionID, msg.Data)
@@ -201,8 +192,8 @@ func (h *Handler) handleUnsubscribe(conn *websocket.Conn, sessionID string) {
 	}
 }
 
-// handleInput sends input to a session (or specific pane)
-func (h *Handler) handleInput(sessionID, paneID string, data json.RawMessage) {
+// handleInput sends input to a session
+func (h *Handler) handleInput(sessionID string, data json.RawMessage) {
 	sess, ok := h.manager.Get(sessionID)
 	if !ok {
 		log.Printf("[WS] handleInput: session not found: %s", sessionID)
@@ -218,18 +209,8 @@ func (h *Handler) handleInput(sessionID, paneID string, data json.RawMessage) {
 	// Track last input time
 	sess.SetLastInputAt(time.Now())
 
-	var n int
-	var err error
-
-	// Route to specific pane if pane_id provided
-	if paneID != "" {
-		n, err = sess.WriteToPane(paneID, []byte(input))
-		log.Printf("[WS] handleInput: writing %d bytes to pane %s", len(input), paneID)
-	} else {
-		n, err = sess.Write([]byte(input))
-		log.Printf("[WS] handleInput: writing %d bytes to session %s", len(input), sessionID)
-	}
-
+	log.Printf("[WS] handleInput: writing %d bytes to session %s, raw input: %v", len(input), sessionID, []byte(input))
+	n, err := sess.Write([]byte(input))
 	if err != nil {
 		log.Printf("[WS] handleInput: write error: %v", err)
 	} else {
@@ -237,8 +218,8 @@ func (h *Handler) handleInput(sessionID, paneID string, data json.RawMessage) {
 	}
 }
 
-// handleResize resizes a session's terminal (or specific pane)
-func (h *Handler) handleResize(sessionID, paneID string, data json.RawMessage) {
+// handleResize resizes a session's terminal
+func (h *Handler) handleResize(sessionID string, data json.RawMessage) {
 	sess, ok := h.manager.Get(sessionID)
 	if !ok {
 		log.Printf("[WS] handleResize: session not found: %s", sessionID)
@@ -251,116 +232,8 @@ func (h *Handler) handleResize(sessionID, paneID string, data json.RawMessage) {
 		return
 	}
 
-	if paneID != "" {
-		log.Printf("[WS] handleResize: pane=%s rows=%d cols=%d", paneID, resize.Rows, resize.Cols)
-		sess.ResizePane(paneID, resize.Rows, resize.Cols)
-	} else {
-		log.Printf("[WS] handleResize: session=%s rows=%d cols=%d", sessionID, resize.Rows, resize.Cols)
-		sess.Resize(resize.Rows, resize.Cols)
-	}
-}
-
-// handleStartPane starts a new pane in a session
-func (h *Handler) handleStartPane(conn *websocket.Conn, sessionID, paneID string, data json.RawMessage) {
-	log.Printf("[WS] handleStartPane: session=%s pane=%s", sessionID, paneID)
-	sess, ok := h.manager.Get(sessionID)
-	if !ok {
-		log.Printf("[WS] Session not found: %s", sessionID)
-		return
-	}
-
-	// Parse size from data
-	var startData struct {
-		Rows uint16 `json:"rows"`
-		Cols uint16 `json:"cols"`
-	}
-	rows := uint16(24)
-	cols := uint16(80)
-	if err := json.Unmarshal(data, &startData); err == nil {
-		if startData.Rows > 0 && startData.Cols > 0 {
-			rows = startData.Rows
-			cols = startData.Cols
-		}
-	}
-
-	// Subscribe to session
-	h.handleSubscribe(conn, sessionID)
-
-	// Create output callback for this pane
-	outputCallback := func(output []byte) {
-		h.broadcastPaneOutput(sessionID, paneID, output)
-	}
-
-	statusCallback := func(status session.Status) {
-		h.broadcastPaneStatus(sessionID, paneID, status)
-	}
-
-	// Start the pane
-	err := sess.StartPane(paneID, rows, cols, outputCallback, statusCallback)
-	if err != nil {
-		log.Printf("[WS] Failed to start pane %s: %v", paneID, err)
-	}
-}
-
-// handleStopPane stops a specific pane
-func (h *Handler) handleStopPane(sessionID, paneID string) {
-	sess, ok := h.manager.Get(sessionID)
-	if !ok {
-		return
-	}
-
-	sess.RemovePane(paneID)
-
-	// If no panes left, the session is idle
-	if sess.GetPaneCount() == 0 {
-		h.broadcastStatus(sessionID, session.StatusIdle)
-	}
-}
-
-// broadcastPaneOutput sends output to subscribers for a specific pane
-func (h *Handler) broadcastPaneOutput(sessionID, paneID string, data []byte) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	msg := OutputMessage{
-		Type:      "output",
-		SessionID: sessionID,
-		PaneID:    paneID,
-		Data:      base64.StdEncoding.EncodeToString(data),
-	}
-
-	msgBytes, _ := json.Marshal(msg)
-
-	for conn, state := range h.connections {
-		if state.subscriptions[sessionID] {
-			state.writeMu.Lock()
-			conn.WriteMessage(websocket.TextMessage, msgBytes)
-			state.writeMu.Unlock()
-		}
-	}
-}
-
-// broadcastPaneStatus sends status update for a specific pane
-func (h *Handler) broadcastPaneStatus(sessionID, paneID string, status session.Status) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	msg := StatusMessage{
-		Type:      "status",
-		SessionID: sessionID,
-		PaneID:    paneID,
-		Status:    status,
-	}
-
-	msgBytes, _ := json.Marshal(msg)
-
-	for conn, state := range h.connections {
-		if state.subscriptions[sessionID] {
-			state.writeMu.Lock()
-			conn.WriteMessage(websocket.TextMessage, msgBytes)
-			state.writeMu.Unlock()
-		}
-	}
+	log.Printf("[WS] handleResize: session=%s rows=%d cols=%d", sessionID, resize.Rows, resize.Cols)
+	sess.Resize(resize.Rows, resize.Cols)
 }
 
 // handleStart starts a session

@@ -82,15 +82,15 @@ class Claudex {
     handleMessage(msg) {
         switch (msg.type) {
             case 'output':
-                this.handleOutput(msg.session_id, msg.data, msg.pane_id);
+                this.handleOutput(msg.session_id, msg.data);
                 break;
             case 'status':
-                this.handleStatus(msg.session_id, msg.status, msg.pane_id);
+                this.handleStatus(msg.session_id, msg.status);
                 break;
         }
     }
 
-    handleOutput(sessionId, data, paneId) {
+    handleOutput(sessionId, data) {
         // Decode Base64 data to Uint8Array, then to UTF-8 string
         const binaryString = atob(data);
         const bytes = new Uint8Array(binaryString.length);
@@ -99,31 +99,18 @@ class Claudex {
         }
         const decoded = new TextDecoder('utf-8').decode(bytes);
 
-        if (this.activeSessionId !== sessionId) return;
-
-        // Route to specific pane if pane_id provided
-        if (paneId) {
-            const pane = this.panes.get(paneId);
-            if (pane) {
+        // Find the pane that has this sessionId and write to it
+        this.panes.forEach(pane => {
+            if (pane.sessionId === sessionId) {
                 pane.terminal.write(decoded);
                 if (this.scrollToBottomPending) {
                     setTimeout(() => pane.terminal.scrollToBottom(), 50);
                 }
             }
-        } else {
-            // Legacy: write to all panes (for backward compatibility)
-            this.panes.forEach(pane => {
-                pane.terminal.write(decoded);
-            });
-        }
+        });
 
         if (this.scrollToBottomPending) {
             this.scrollToBottomPending = false;
-            [50, 200, 500].forEach(delay => {
-                setTimeout(() => {
-                    this.panes.forEach(pane => pane.terminal.scrollToBottom());
-                }, delay);
-            });
         }
     }
 
@@ -559,22 +546,30 @@ class Claudex {
         // Create first pane
         this.createPane(sessionId);
 
-        // Subscribe to session
+        // Subscribe and start the session
+        const firstPane = this.panes.values().next().value;
+
         this.ws.send(JSON.stringify({
             type: 'subscribe',
             session_id: sessionId
         }));
 
-        // Start first pane on backend
-        const firstPane = this.panes.values().next().value;
+        if ((session.status === 'idle' || !session.status) && firstPane) {
+            this.ws.send(JSON.stringify({
+                type: 'start',
+                session_id: sessionId,
+                data: { rows: firstPane.terminal.rows, cols: firstPane.terminal.cols }
+            }));
+        }
+
         if (firstPane) {
-            this.sendStartPane(sessionId, firstPane.paneId, firstPane.terminal.rows, firstPane.terminal.cols);
+            firstPane.terminal.focus();
         }
 
         this.scrollToBottomPending = true;
     }
 
-    createPane(sessionId, isFirstPane = true) {
+    createPane(sessionId) {
         const paneId = `pane-${++this.paneCounter}`;
         const panesContainer = document.getElementById('modal-panes');
 
@@ -620,16 +615,16 @@ class Claudex {
         terminal.open(termContainer);
         fitAddon.fit();
 
-        // Input handling - route to specific pane
+        // Input handling - send to this pane's session
         terminal.onData(data => {
-            this.sendInput(sessionId, data, paneId);
+            this.sendInput(sessionId, data);
         });
 
         // Custom key handlers
         terminal.attachCustomKeyEventHandler((event) => {
             if (event.type === 'keydown') {
                 if (event.key === 'Enter' && event.shiftKey) {
-                    this.sendInput(sessionId, '\x1b[13;2u', paneId);
+                    this.sendInput(sessionId, '\x1b[13;2u');
                     return false;
                 }
                 if (event.key === 'Escape' && event.shiftKey) {
@@ -643,8 +638,8 @@ class Claudex {
         // Focus handling
         paneEl.onclick = () => this.setActivePane(paneId);
 
-        // Store pane
-        const pane = { paneId, terminal, fitAddon, element: paneEl };
+        // Store pane with its sessionId
+        const pane = { paneId, sessionId, terminal, fitAddon, element: paneEl };
         this.panes.set(paneId, pane);
 
         // Set as active if first pane
@@ -653,18 +648,18 @@ class Claudex {
         }
 
         // Setup resize observer
-        this.setupPaneResizeObserver(pane, sessionId);
+        this.setupPaneResizeObserver(pane);
 
         return pane;
     }
 
-    setupPaneResizeObserver(pane, sessionId) {
+    setupPaneResizeObserver(pane) {
         let resizeTimeout;
         const observer = new ResizeObserver(() => {
             clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(() => {
                 pane.fitAddon.fit();
-                this.sendResize(sessionId, pane.terminal.rows, pane.terminal.cols, pane.paneId);
+                this.sendResize(pane.sessionId, pane.terminal.rows, pane.terminal.cols);
             }, 100);
         });
         observer.observe(pane.element);
@@ -695,10 +690,11 @@ class Claudex {
         const pane = this.panes.get(paneId);
         if (!pane) return;
 
-        // Stop pane on backend
-        if (this.activeSessionId) {
-            this.sendStopPane(this.activeSessionId, paneId);
-        }
+        // Unsubscribe from the pane's session
+        this.ws.send(JSON.stringify({
+            type: 'unsubscribe',
+            session_id: pane.sessionId
+        }));
 
         // Cleanup UI
         if (pane.resizeObserver) pane.resizeObserver.disconnect();
@@ -722,22 +718,53 @@ class Claudex {
         }
     }
 
-    splitPane(direction) {
+    async splitPane(direction) {
         if (!this.activeSessionId) return;
 
-        const sessionId = this.activeSessionId;
+        // Get the original session to copy its directory
+        const originalSession = this.sessions.get(this.activeSessionId);
+        if (!originalSession) return;
 
-        // Create new pane (UI only)
-        const newPane = this.createPane(sessionId, false); // false = don't start yet
+        // Create a new session with the same directory
+        try {
+            const response = await fetch('/api/sessions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: `${originalSession.name} (split)`,
+                    directory: originalSession.directory
+                })
+            });
 
-        // Rebuild split layout
-        this.rebuildSplit(direction);
+            if (!response.ok) throw new Error('Failed to create session');
 
-        // Start the pane on the backend
-        this.sendStartPane(sessionId, newPane.paneId, newPane.terminal.rows, newPane.terminal.cols);
+            const newSession = await response.json();
+            this.sessions.set(newSession.id, newSession);
 
-        // Focus new pane
-        this.setActivePane(newPane.paneId);
+            // Create new pane for this session
+            const newPane = this.createPane(newSession.id);
+
+            // Rebuild split layout
+            this.rebuildSplit(direction);
+
+            // Subscribe and start the new session
+            this.ws.send(JSON.stringify({
+                type: 'subscribe',
+                session_id: newSession.id
+            }));
+
+            this.ws.send(JSON.stringify({
+                type: 'start',
+                session_id: newSession.id,
+                data: { rows: newPane.terminal.rows, cols: newPane.terminal.cols }
+            }));
+
+            // Focus new pane
+            this.setActivePane(newPane.paneId);
+
+        } catch (err) {
+            console.error('Failed to split pane:', err);
+        }
     }
 
     rebuildSplit(direction) {
@@ -780,12 +807,17 @@ class Claudex {
     }
 
     closeModal() {
-        if (this.activeSessionId) {
+        // Unsubscribe from all pane sessions
+        const sessionIds = new Set();
+        this.panes.forEach(pane => {
+            sessionIds.add(pane.sessionId);
+        });
+        sessionIds.forEach(sessionId => {
             this.ws.send(JSON.stringify({
                 type: 'unsubscribe',
-                session_id: this.activeSessionId
+                session_id: sessionId
             }));
-        }
+        });
 
         // Cleanup all panes
         this.panes.forEach(pane => {
@@ -828,48 +860,23 @@ class Claudex {
         }
     }
 
-    sendInput(sessionId, data, paneId) {
+    sendInput(sessionId, data) {
         if (this.ws.readyState !== WebSocket.OPEN) return;
 
-        const msg = {
+        this.ws.send(JSON.stringify({
             type: 'input',
             session_id: sessionId,
             data: data
-        };
-        if (paneId) msg.pane_id = paneId;
-        this.ws.send(JSON.stringify(msg));
-    }
-
-    sendResize(sessionId, rows, cols, paneId) {
-        if (this.ws.readyState !== WebSocket.OPEN) return;
-
-        const msg = {
-            type: 'resize',
-            session_id: sessionId,
-            data: { rows, cols }
-        };
-        if (paneId) msg.pane_id = paneId;
-        this.ws.send(JSON.stringify(msg));
-    }
-
-    sendStartPane(sessionId, paneId, rows, cols) {
-        if (this.ws.readyState !== WebSocket.OPEN) return;
-
-        this.ws.send(JSON.stringify({
-            type: 'start_pane',
-            session_id: sessionId,
-            pane_id: paneId,
-            data: { rows, cols }
         }));
     }
 
-    sendStopPane(sessionId, paneId) {
+    sendResize(sessionId, rows, cols) {
         if (this.ws.readyState !== WebSocket.OPEN) return;
 
         this.ws.send(JSON.stringify({
-            type: 'stop_pane',
+            type: 'resize',
             session_id: sessionId,
-            pane_id: paneId
+            data: { rows, cols }
         }));
     }
 
