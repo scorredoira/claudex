@@ -1118,6 +1118,14 @@ class World3D {
             }
         });
 
+        // Handle center button click (open session)
+        const center = this.radialMenu.querySelector('.radial-menu-center');
+        center.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.handleRadialAction('open', this.radialSessionId);
+            this.hideRadialMenu();
+        });
+
         // Handle radial menu actions
         this.radialMenu.querySelectorAll('.radial-item').forEach(item => {
             item.addEventListener('click', (e) => {

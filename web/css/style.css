@@ -604,11 +604,20 @@ header h1 {
     font-size: 1.2rem;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
     opacity: 0;
-    transition: opacity 0.15s, transform 0.15s;
+    transition: opacity 0.15s, transform 0.15s, background 0.15s;
+    cursor: pointer;
 }
 
 .radial-menu.active .radial-menu-center {
     opacity: 1;
+}
+
+.radial-menu-center:hover {
+    background: var(--accent);
+}
+
+.radial-menu-center:hover svg {
+    stroke: white;
 }
 
 .radial-item {

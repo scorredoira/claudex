@@ -97,8 +97,10 @@ class Claudex {
         }
 
         // Notification when finished (was thinking/executing, now waiting)
+        // But not if we're already viewing this session
         if ((oldStatus === 'thinking' || oldStatus === 'executing') &&
-            status === 'waiting_input') {
+            status === 'waiting_input' &&
+            this.activeSessionId !== sessionId) {
             this.showNotification(session.name, 'Ready for input');
         }
     }
