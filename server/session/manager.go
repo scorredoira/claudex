@@ -267,12 +267,13 @@ func (m *Manager) RemoveWorktree(s *Session) error {
 
 // ClientState represents the complete UI state for persistence
 type ClientState struct {
-	ActiveSession string         `json:"activeSession,omitempty"`
-	SessionOrder  []string       `json:"sessionOrder,omitempty"`
-	Theme         string         `json:"theme,omitempty"`
-	View3D        bool           `json:"view3d"`
-	Camera        *CameraState   `json:"camera,omitempty"`
-	EmptyIslands  []HexPosition  `json:"emptyIslands,omitempty"` // Empty hex parcels (islands)
+	ActiveSession string                    `json:"activeSession,omitempty"`
+	SessionOrder  []string                  `json:"sessionOrder,omitempty"`
+	Theme         string                    `json:"theme,omitempty"`
+	View3D        bool                      `json:"view3d"`
+	Camera        *CameraState              `json:"camera,omitempty"`
+	EmptyIslands  []HexPosition             `json:"emptyIslands,omitempty"`
+	SplitLayouts  map[string]interface{} `json:"splitLayouts,omitempty"` // sessionId -> split tree
 }
 
 // HexPosition represents a hex grid coordinate

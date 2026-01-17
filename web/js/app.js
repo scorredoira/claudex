@@ -15,8 +15,9 @@ class Claudex {
         this.activePaneId = null;
         this.splitInstances = []; // Array of Split.js instances for cleanup
         this.paneCounter = 0;
-        // Split tree: { type: 'pane', paneId } or { type: 'split', direction, children: [node, node] }
+        // Split tree: { type: 'pane', paneId, sessionId } or { type: 'split', direction, children: [node, node] }
         this.splitTree = null;
+        this.primarySessionId = null; // The session that was originally opened (for saving layout)
 
         this.init();
     }
@@ -506,6 +507,7 @@ class Claudex {
         if (!session) return;
 
         this.activeSessionId = sessionId;
+        this.primarySessionId = sessionId;
         this.clientState.activeSession = sessionId;
         this.saveClientState();
 
@@ -532,10 +534,9 @@ class Claudex {
         this.panes.clear();
         this.activePaneId = null;
         this.paneCounter = 0;
-        if (this.splitInstance) {
-            this.splitInstance.destroy();
-            this.splitInstance = null;
-        }
+        this.splitInstances.forEach(s => s.destroy());
+        this.splitInstances = [];
+        this.splitTree = null;
 
         // Setup panes container
         const panesContainer = document.getElementById('modal-panes');
@@ -545,30 +546,128 @@ class Claudex {
         // Show modal FIRST so container has dimensions
         document.getElementById('modal').classList.remove('hidden');
 
-        // Create first pane
-        this.createPane(sessionId);
+        // Check for saved split layout
+        const savedLayout = this.loadSplitLayout(sessionId);
+        if (savedLayout && savedLayout.splitTree) {
+            this.restoreSplitLayout(savedLayout);
+        } else {
+            // Create single pane
+            const pane = this.createPane(sessionId);
+            this.splitTree = { type: 'pane', paneId: pane.paneId, sessionId: sessionId };
+            this.subscribeAndStartSession(sessionId, pane);
+        }
 
-        // Subscribe and start the session
-        const firstPane = this.panes.values().next().value;
+        this.scrollToBottomPending = true;
+    }
+
+    subscribeAndStartSession(sessionId, pane) {
+        const session = this.sessions.get(sessionId);
 
         this.ws.send(JSON.stringify({
             type: 'subscribe',
             session_id: sessionId
         }));
 
-        if ((session.status === 'idle' || !session.status) && firstPane) {
+        if ((session?.status === 'idle' || !session?.status) && pane) {
             this.ws.send(JSON.stringify({
                 type: 'start',
                 session_id: sessionId,
-                data: { rows: firstPane.terminal.rows, cols: firstPane.terminal.cols }
+                data: { rows: pane.terminal.rows, cols: pane.terminal.cols }
             }));
         }
 
-        if (firstPane) {
-            firstPane.terminal.focus();
+        if (pane) {
+            pane.terminal.focus();
+        }
+    }
+
+    // Save split layout to server (via clientState)
+    saveSplitLayout() {
+        if (!this.primarySessionId || !this.splitTree) return;
+
+        // Convert splitTree to use sessionIds instead of paneIds for persistence
+        const persistentTree = this.convertTreeForStorage(this.splitTree);
+
+        // Initialize splitLayouts if needed
+        if (!this.clientState.splitLayouts) {
+            this.clientState.splitLayouts = {};
         }
 
-        this.scrollToBottomPending = true;
+        this.clientState.splitLayouts[this.primarySessionId] = {
+            splitTree: persistentTree
+        };
+
+        this.saveClientState();
+    }
+
+    // Convert tree to use sessionIds for storage
+    convertTreeForStorage(node) {
+        if (node.type === 'pane') {
+            const pane = this.panes.get(node.paneId);
+            return { type: 'pane', sessionId: pane?.sessionId || node.sessionId };
+        }
+        if (node.type === 'split') {
+            return {
+                type: 'split',
+                direction: node.direction,
+                children: node.children.map(c => this.convertTreeForStorage(c))
+            };
+        }
+        return node;
+    }
+
+    // Load split layout from server (via clientState)
+    loadSplitLayout(sessionId) {
+        if (!this.clientState.splitLayouts) return null;
+        return this.clientState.splitLayouts[sessionId] || null;
+    }
+
+    // Clear saved layout
+    clearSplitLayout(sessionId) {
+        if (this.clientState.splitLayouts && this.clientState.splitLayouts[sessionId]) {
+            delete this.clientState.splitLayouts[sessionId];
+            this.saveClientState();
+        }
+    }
+
+    // Restore split layout from saved data
+    restoreSplitLayout(layout) {
+        // Recursively create panes from the saved tree
+        const createPanesFromTree = (node) => {
+            if (node.type === 'pane') {
+                // Check if session still exists
+                if (!this.sessions.has(node.sessionId)) {
+                    // Session was deleted, skip
+                    return null;
+                }
+                const pane = this.createPane(node.sessionId, false);
+                this.subscribeAndStartSession(node.sessionId, pane);
+                return { type: 'pane', paneId: pane.paneId, sessionId: node.sessionId };
+            }
+            if (node.type === 'split') {
+                const children = node.children.map(c => createPanesFromTree(c)).filter(c => c !== null);
+                if (children.length === 0) return null;
+                if (children.length === 1) return children[0];
+                return {
+                    type: 'split',
+                    direction: node.direction,
+                    children: children
+                };
+            }
+            return null;
+        };
+
+        this.splitTree = createPanesFromTree(layout.splitTree);
+
+        if (!this.splitTree) {
+            // All sessions were deleted, create fresh pane
+            const pane = this.createPane(this.primarySessionId);
+            this.splitTree = { type: 'pane', paneId: pane.paneId, sessionId: this.primarySessionId };
+            this.subscribeAndStartSession(this.primarySessionId, pane);
+            this.clearSplitLayout(this.primarySessionId);
+        } else {
+            this.renderSplitTree();
+        }
     }
 
     createPane(sessionId, addToContainer = true) {
@@ -706,9 +805,10 @@ class Claudex {
         pane.terminal.dispose();
         this.panes.delete(paneId);
 
-        // If no panes left, close modal
+        // If no panes left, close modal and clear saved layout
         if (this.panes.size === 0) {
             this.splitTree = null;
+            this.clearSplitLayout(this.primarySessionId);
             this.closeModal();
             return;
         }
@@ -718,6 +818,9 @@ class Claudex {
 
         // Re-render
         this.renderSplitTree();
+
+        // Save updated layout
+        this.saveSplitLayout();
 
         // Set new active pane
         if (this.activePaneId === paneId) {
@@ -827,6 +930,9 @@ class Claudex {
             // Focus new pane
             this.setActivePane(newPane.paneId);
 
+            // Save layout
+            this.saveSplitLayout();
+
         } catch (err) {
             console.error('Failed to split pane:', err);
         }
@@ -834,8 +940,10 @@ class Claudex {
 
     // Update split tree: replace pane node with a split containing old and new pane
     updateSplitTree(oldPaneId, newPaneId, direction) {
-        const oldPaneNode = { type: 'pane', paneId: oldPaneId };
-        const newPaneNode = { type: 'pane', paneId: newPaneId };
+        const oldPane = this.panes.get(oldPaneId);
+        const newPane = this.panes.get(newPaneId);
+        const oldPaneNode = { type: 'pane', paneId: oldPaneId, sessionId: oldPane?.sessionId };
+        const newPaneNode = { type: 'pane', paneId: newPaneId, sessionId: newPane?.sessionId };
 
         if (!this.splitTree) {
             // First split: create root split node
