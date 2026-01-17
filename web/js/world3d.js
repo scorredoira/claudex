@@ -259,6 +259,9 @@ class World3D {
         edge.scale.set(0.95, 0.95, 1);
         group.add(edge);
 
+        // Add grass decorations
+        this.addGrassDetails(group, q, r);
+
         // Position in hex grid
         const pos = this.hexToWorld(q, r);
         group.position.set(pos.x, 0, pos.z);
@@ -275,6 +278,74 @@ class World3D {
         }
 
         return group;
+    }
+
+    addGrassDetails(group, q, r) {
+        // Use q,r as seed for consistent random placement
+        const seed = Math.abs(q * 1000 + r * 7);
+        const random = (i) => {
+            const x = Math.sin(seed + i * 9999) * 10000;
+            return x - Math.floor(x);
+        };
+
+        // Grass tufts (small cones)
+        const tuffMat = new THREE.MeshStandardMaterial({
+            color: 0x5a9a30,
+            roughness: 0.9,
+            flatShading: true
+        });
+
+        for (let i = 0; i < 4; i++) {
+            const angle = random(i) * Math.PI * 2;
+            const dist = 0.3 + random(i + 10) * 0.5;
+            const x = Math.cos(angle) * dist;
+            const z = Math.sin(angle) * dist;
+
+            const tuftGeo = new THREE.ConeGeometry(0.04, 0.12, 4);
+            const tuft = new THREE.Mesh(tuftGeo, tuffMat);
+            tuft.position.set(x, this.hexHeight + 0.06, z);
+            tuft.rotation.y = random(i + 20) * Math.PI;
+            group.add(tuft);
+        }
+
+        // Small flowers (only on some parcels)
+        if (random(50) > 0.5) {
+            const flowerColors = [0xff6b9d, 0xffd93d, 0xff8c42, 0xc9f0ff];
+            const flowerColor = flowerColors[Math.floor(random(60) * flowerColors.length)];
+            const flowerMat = new THREE.MeshBasicMaterial({ color: flowerColor });
+
+            for (let i = 0; i < 2; i++) {
+                const angle = random(i + 100) * Math.PI * 2;
+                const dist = 0.4 + random(i + 110) * 0.4;
+                const x = Math.cos(angle) * dist;
+                const z = Math.sin(angle) * dist;
+
+                const flowerGeo = new THREE.SphereGeometry(0.035, 6, 4);
+                const flower = new THREE.Mesh(flowerGeo, flowerMat);
+                flower.position.set(x, this.hexHeight + 0.05, z);
+                group.add(flower);
+            }
+        }
+
+        // Tiny rocks (on some parcels)
+        if (random(70) > 0.6) {
+            const rockMat = new THREE.MeshStandardMaterial({
+                color: 0x888888,
+                roughness: 1,
+                flatShading: true
+            });
+
+            const angle = random(200) * Math.PI * 2;
+            const dist = 0.5 + random(210) * 0.3;
+            const x = Math.cos(angle) * dist;
+            const z = Math.sin(angle) * dist;
+
+            const rockGeo = new THREE.DodecahedronGeometry(0.05, 0);
+            const rock = new THREE.Mesh(rockGeo, rockMat);
+            rock.position.set(x, this.hexHeight + 0.02, z);
+            rock.rotation.set(random(220), random(230), random(240));
+            group.add(rock);
+        }
     }
 
     createTileLabel(text) {
