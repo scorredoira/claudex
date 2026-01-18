@@ -80,9 +80,10 @@ type Session struct {
 	UpdatedAt    time.Time         `json:"updated_at"`
 	LastInputAt  time.Time         `json:"last_input_at,omitempty"`
 	Directory    string            `json:"directory"`
-	ParentID     string            `json:"parent_id,omitempty"`
-	WorktreePath string            `json:"worktree_path,omitempty"`
-	Branch       string            `json:"branch,omitempty"`
+	ParentID      string            `json:"parent_id,omitempty"`
+	SplitParentID string            `json:"split_parent_id,omitempty"` // For split panes - these don't get their own robot
+	WorktreePath  string            `json:"worktree_path,omitempty"`
+	Branch        string            `json:"branch,omitempty"`
 
 	// Robot customization
 	RobotModel     string `json:"robot_model,omitempty"`

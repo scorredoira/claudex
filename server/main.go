@@ -47,6 +47,9 @@ func main() {
 	http.HandleFunc("/api/sessions/experiment", wsHandler.HandleCreateExperiment)
 	http.HandleFunc("/api/sessions/", wsHandler.HandleSessionUpdate)
 	http.HandleFunc("/api/client-state", wsHandler.HandleClientState)
+	http.HandleFunc("/api/worktree", wsHandler.HandleWorktree)
+	http.HandleFunc("/api/worktree/merge", wsHandler.HandleWorktreeMerge)
+	http.HandleFunc("/api/worktree/discard", wsHandler.HandleWorktreeDiscard)
 
 	// Static files (web frontend)
 	webDir := os.ExpandEnv("$HOME/.claudex/web")

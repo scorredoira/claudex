@@ -24,9 +24,65 @@ class Claudex {
 
     async init() {
         await this.loadClientState();
+        await this.checkWorktree();
         this.connectWebSocket();
         this.setupEventListeners();
         await this.loadSessions();
+    }
+
+    // Check if we're in a git worktree
+    async checkWorktree() {
+        try {
+            const response = await fetch('/api/worktree');
+            const info = await response.json();
+
+            if (info.is_worktree) {
+                const bar = document.getElementById('worktree-bar');
+                const branchEl = document.getElementById('worktree-branch');
+
+                branchEl.textContent = info.branch;
+                bar.classList.remove('hidden');
+
+                // Setup merge button
+                document.getElementById('worktree-merge').onclick = async () => {
+                    if (!confirm(`Merge "${info.branch}" into master and close this worktree?`)) return;
+
+                    try {
+                        const res = await fetch('/api/worktree/merge', { method: 'POST' });
+                        if (res.ok) {
+                            alert('Merged successfully! The server will restart.');
+                            // Server will be gone, try to redirect to main repo
+                            window.location.href = '/';
+                        } else {
+                            const err = await res.text();
+                            alert('Merge failed: ' + err);
+                        }
+                    } catch (e) {
+                        alert('Merge failed: ' + e.message);
+                    }
+                };
+
+                // Setup discard button
+                document.getElementById('worktree-discard').onclick = async () => {
+                    if (!confirm(`Discard all changes in "${info.branch}" and close this worktree?`)) return;
+
+                    try {
+                        const res = await fetch('/api/worktree/discard', { method: 'POST' });
+                        if (res.ok) {
+                            alert('Worktree discarded! The server will stop.');
+                            window.location.href = '/';
+                        } else {
+                            const err = await res.text();
+                            alert('Discard failed: ' + err);
+                        }
+                    } catch (e) {
+                        alert('Discard failed: ' + e.message);
+                    }
+                };
+            }
+        } catch (err) {
+            console.error('Failed to check worktree:', err);
+        }
     }
 
     // Client state persistence (server-side)
@@ -410,12 +466,47 @@ class Claudex {
                 this.world3d.updateSessions(this.sessions);
             }
 
-            // Open the new experiment session
-            this.openSession(session.id);
+            // If modal is open, open experiment in a split pane
+            const modal = document.getElementById('modal');
+            if (!modal.classList.contains('hidden') && this.activePaneId) {
+                await this.openExperimentInSplit(session);
+            } else {
+                // Open the new experiment session
+                this.openSession(session.id);
+            }
         } catch (err) {
             console.error('Failed to create experiment:', err);
             alert('Failed to create experiment: ' + err.message);
         }
+    }
+
+    async openExperimentInSplit(session) {
+        // Create new pane for experiment (don't add to container yet)
+        const newPane = this.createPane(session.id, false);
+
+        // Update split tree with vertical split
+        this.updateSplitTree(this.activePaneId, newPane.paneId, 'horizontal');
+
+        // Re-render the tree
+        this.renderSplitTree();
+
+        // Subscribe and start the new session
+        this.ws.send(JSON.stringify({
+            type: 'subscribe',
+            session_id: session.id
+        }));
+
+        this.ws.send(JSON.stringify({
+            type: 'start',
+            session_id: session.id,
+            data: { rows: newPane.terminal.rows, cols: newPane.terminal.cols }
+        }));
+
+        // Focus new pane
+        this.setActivePane(newPane.paneId);
+
+        // Save layout
+        this.saveSplitLayout();
     }
 
     confirmDelete(sessionId) {
@@ -468,6 +559,94 @@ class Claudex {
         } catch (err) {
             console.error('Failed to delete session:', err);
         }
+    }
+
+    async mergeExperiment(sessionId) {
+        const session = this.sessions.get(sessionId);
+        if (!session || !session.parent_id) return;
+
+        const parentSession = this.sessions.get(session.parent_id);
+        const parentName = parentSession?.name || session.parent_id;
+
+        this.showConfirm(`Merge "${session.name}" into "${parentName}"?`, async () => {
+            try {
+                const response = await fetch(`/api/sessions/${sessionId}/merge`, {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    const error = await response.text();
+                    alert('Merge failed: ' + error);
+                    return;
+                }
+
+                // Close the pane for this session
+                const paneId = this.findPaneBySessionId(sessionId);
+                if (paneId) {
+                    this.closePane(paneId);
+                }
+
+                // Remove session from list
+                this.sessions.delete(sessionId);
+                const card = document.querySelector(`[data-session-id="${sessionId}"]`);
+                if (card) card.remove();
+
+                // Update 3D world
+                if (this.world3d) {
+                    this.world3d.updateSessions(this.sessions);
+                }
+            } catch (err) {
+                console.error('Failed to merge experiment:', err);
+                alert('Failed to merge experiment: ' + err.message);
+            }
+        });
+    }
+
+    async discardExperiment(sessionId) {
+        const session = this.sessions.get(sessionId);
+        if (!session || !session.parent_id) return;
+
+        this.showConfirm(`Discard "${session.name}" and all its changes?`, async () => {
+            try {
+                const response = await fetch(`/api/sessions/${sessionId}/discard`, {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    const error = await response.text();
+                    alert('Discard failed: ' + error);
+                    return;
+                }
+
+                // Close the pane for this session
+                const paneId = this.findPaneBySessionId(sessionId);
+                if (paneId) {
+                    this.closePane(paneId);
+                }
+
+                // Remove session from list
+                this.sessions.delete(sessionId);
+                const card = document.querySelector(`[data-session-id="${sessionId}"]`);
+                if (card) card.remove();
+
+                // Update 3D world
+                if (this.world3d) {
+                    this.world3d.updateSessions(this.sessions);
+                }
+            } catch (err) {
+                console.error('Failed to discard experiment:', err);
+                alert('Failed to discard experiment: ' + err.message);
+            }
+        });
+    }
+
+    findPaneBySessionId(sessionId) {
+        for (const [paneId, pane] of this.panes) {
+            if (pane.sessionId === sessionId) {
+                return paneId;
+            }
+        }
+        return null;
     }
 
     async updateSessionName(sessionId, newName) {
@@ -780,6 +959,25 @@ class Claudex {
             pane.element.classList.add('active');
             this.activePaneId = paneId;
             pane.terminal.focus();
+
+            // Update experiment buttons visibility
+            this.updateExperimentButtons(pane.sessionId);
+        }
+    }
+
+    updateExperimentButtons(sessionId) {
+        const session = this.sessions.get(sessionId);
+        const mergeBtn = document.getElementById('modal-exp-merge');
+        const discardBtn = document.getElementById('modal-exp-discard');
+
+        if (session && session.parent_id) {
+            // This is an experiment, show buttons
+            mergeBtn.classList.remove('hidden');
+            discardBtn.classList.remove('hidden');
+        } else {
+            // Not an experiment, hide buttons
+            mergeBtn.classList.add('hidden');
+            discardBtn.classList.add('hidden');
         }
     }
 
@@ -891,13 +1089,15 @@ class Claudex {
         if (!originalSession) return;
 
         // Create a new session with the same directory
+        // Mark it as a split child so it doesn't get its own robot in 3D view
         try {
             const response = await fetch('/api/sessions/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     name: `${originalSession.name} (split)`,
-                    directory: originalSession.directory
+                    directory: originalSession.directory,
+                    split_parent_id: this.primarySessionId
                 })
             });
 
@@ -1202,8 +1402,31 @@ class Claudex {
 
         // Experiment from modal
         document.getElementById('modal-experiment').onclick = () => {
-            if (this.activeSessionId) {
-                this.createExperiment(this.activeSessionId);
+            if (this.activePaneId) {
+                const pane = this.panes.get(this.activePaneId);
+                if (pane) {
+                    this.createExperiment(pane.sessionId);
+                }
+            }
+        };
+
+        // Merge experiment
+        document.getElementById('modal-exp-merge').onclick = () => {
+            if (this.activePaneId) {
+                const pane = this.panes.get(this.activePaneId);
+                if (pane) {
+                    this.mergeExperiment(pane.sessionId);
+                }
+            }
+        };
+
+        // Discard experiment
+        document.getElementById('modal-exp-discard').onclick = () => {
+            if (this.activePaneId) {
+                const pane = this.panes.get(this.activePaneId);
+                if (pane) {
+                    this.discardExperiment(pane.sessionId);
+                }
             }
         };
 

@@ -500,10 +500,11 @@ func (h *Handler) HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name      string `json:"name"`
-		Directory string `json:"directory"`
-		HexQ      *int   `json:"hex_q"`
-		HexR      *int   `json:"hex_r"`
+		Name          string `json:"name"`
+		Directory     string `json:"directory"`
+		HexQ          *int   `json:"hex_q"`
+		HexR          *int   `json:"hex_r"`
+		SplitParentID string `json:"split_parent_id"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -529,6 +530,12 @@ func (h *Handler) HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.HexQ != nil && req.HexR != nil {
 		sess.HexQ = req.HexQ
 		sess.HexR = req.HexR
+		h.manager.UpdateSession(sess)
+	}
+
+	// Set split parent if this is a split pane session
+	if req.SplitParentID != "" {
+		sess.SplitParentID = req.SplitParentID
 		h.manager.UpdateSession(sess)
 	}
 
@@ -704,9 +711,160 @@ func (h *Handler) HandleSessionUpdate(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 
+	case "merge":
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Only experiments can be merged
+		if sess.ParentID == "" {
+			http.Error(w, "Not an experiment", http.StatusBadRequest)
+			return
+		}
+
+		// Get parent session to find its directory
+		parent, ok := h.manager.Get(sess.ParentID)
+		if !ok {
+			http.Error(w, "Parent session not found", http.StatusNotFound)
+			return
+		}
+
+		// Merge the experiment worktree into parent
+		if err := h.mergeExperimentWorktree(sess, parent); err != nil {
+			http.Error(w, "Merge failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Delete the experiment session
+		h.manager.Delete(sessionID)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	case "discard":
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Only experiments can be discarded
+		if sess.ParentID == "" {
+			http.Error(w, "Not an experiment", http.StatusBadRequest)
+			return
+		}
+
+		// Discard the experiment worktree
+		if err := h.discardExperimentWorktree(sess); err != nil {
+			http.Error(w, "Discard failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Delete the experiment session
+		h.manager.Delete(sessionID)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
 	default:
 		http.Error(w, "Unknown action", http.StatusBadRequest)
 	}
+}
+
+// mergeExperimentWorktree merges an experiment worktree into its parent
+func (h *Handler) mergeExperimentWorktree(experiment, parent *session.Session) error {
+	// Git operations in the experiment directory
+	expDir := experiment.Directory
+
+	// Add and commit any pending changes
+	cmd := exec.Command("git", "add", "-A")
+	cmd.Dir = expDir
+	cmd.Run() // Ignore error if nothing to add
+
+	cmd = exec.Command("git", "diff", "--cached", "--quiet")
+	cmd.Dir = expDir
+	if cmd.Run() != nil {
+		// There are staged changes, commit them
+		cmd = exec.Command("git", "commit", "-m", "WIP: Auto-commit before merge")
+		cmd.Dir = expDir
+		if _, err := cmd.CombinedOutput(); err != nil {
+			// Ignore commit errors (might be nothing to commit)
+		}
+	}
+
+	// Get current branch name
+	cmd = exec.Command("git", "branch", "--show-current")
+	cmd.Dir = expDir
+	branchOut, _ := cmd.Output()
+	branch := strings.TrimSpace(string(branchOut))
+
+	// Go to parent directory and merge
+	parentDir := parent.Directory
+
+	// Checkout master/main in parent
+	cmd = exec.Command("git", "checkout", "master")
+	cmd.Dir = parentDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// Try main if master fails
+		cmd = exec.Command("git", "checkout", "main")
+		cmd.Dir = parentDir
+		if out2, err2 := cmd.CombinedOutput(); err2 != nil {
+			return fmt.Errorf("checkout failed: %s / %s", out, out2)
+		}
+	}
+
+	// Merge the experiment branch
+	cmd = exec.Command("git", "merge", branch, "--no-edit")
+	cmd.Dir = parentDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("merge failed: %s", out)
+	}
+
+	// Remove the worktree
+	cmd = exec.Command("git", "worktree", "remove", expDir)
+	cmd.Dir = parentDir
+	cmd.Run() // Best effort
+
+	// Delete the branch
+	cmd = exec.Command("git", "branch", "-d", branch)
+	cmd.Dir = parentDir
+	cmd.Run() // Best effort
+
+	return nil
+}
+
+// discardExperimentWorktree removes an experiment worktree without merging
+func (h *Handler) discardExperimentWorktree(experiment *session.Session) error {
+	expDir := experiment.Directory
+
+	// Find main repo directory (parent of worktree)
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	cmd.Dir = expDir
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to find main repo: %v", err)
+	}
+	// Output is like /path/to/main/.git
+	mainGit := strings.TrimSpace(string(out))
+	mainDir := filepath.Dir(mainGit)
+
+	// Get branch name
+	cmd = exec.Command("git", "branch", "--show-current")
+	cmd.Dir = expDir
+	branchOut, _ := cmd.Output()
+	branch := strings.TrimSpace(string(branchOut))
+
+	// Force remove the worktree
+	cmd = exec.Command("git", "worktree", "remove", "--force", expDir)
+	cmd.Dir = mainDir
+	cmd.Run() // Best effort
+
+	// Force delete the branch
+	cmd = exec.Command("git", "branch", "-D", branch)
+	cmd.Dir = mainDir
+	cmd.Run() // Best effort
+
+	return nil
 }
 
 // HandleClientState handles GET/PUT for client UI state

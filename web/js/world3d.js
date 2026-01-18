@@ -1000,12 +1000,20 @@ class World3D {
         });
         this.emptyParcels.clear();
 
+        // Filter out split child sessions - they share the parent's robot
+        const mainSessions = new Map();
+        sessionsMap.forEach((session, id) => {
+            if (!session.split_parent_id) {
+                mainSessions.set(id, session);
+            }
+        });
+
         // Collect sessions with and without saved positions
         const withPosition = [];
         const withoutPosition = [];
         const occupiedPositions = new Set();
 
-        sessionsMap.forEach((session, id) => {
+        mainSessions.forEach((session, id) => {
             if (session.hex_q !== undefined && session.hex_q !== null &&
                 session.hex_r !== undefined && session.hex_r !== null) {
                 withPosition.push({ session, id, q: session.hex_q, r: session.hex_r });
@@ -1016,7 +1024,7 @@ class World3D {
         });
 
         // Assign spiral positions to sessions without saved positions
-        const spiralPositions = this.getSpiralPositions(sessionsMap.size + 10); // Extra buffer
+        const spiralPositions = this.getSpiralPositions(mainSessions.size + 10); // Extra buffer
         let spiralIndex = 0;
         withoutPosition.forEach(item => {
             // Find next free spiral position
@@ -1129,7 +1137,11 @@ class World3D {
     }
 
     updateSessionStatus(sessionId, status) {
-        const robot = this.robots.get(sessionId);
+        // Check if this is a split child session - if so, update the parent's robot
+        const session = this.sessions.get(sessionId);
+        const targetId = session?.split_parent_id || sessionId;
+
+        const robot = this.robots.get(targetId);
         if (robot) {
             this.updateRobotStatus(robot, status);
         }
