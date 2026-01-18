@@ -31,6 +31,7 @@ type SessionInfo struct {
 	LastInputAt  string            `json:"last_input_at,omitempty"`
 	Directory    string            `json:"directory"`
 	ParentID     string            `json:"parent_id,omitempty"`
+	SplitParentID string           `json:"split_parent_id,omitempty"`
 	WorktreePath   string            `json:"worktree_path,omitempty"`
 	Branch         string            `json:"branch,omitempty"`
 	RobotModel          string            `json:"robot_model,omitempty"`
@@ -133,6 +134,7 @@ func (m *Manager) saveSession(s *Session) error {
 		LastInputAt:    s.LastInputAt.Format("2006-01-02T15:04:05Z07:00"),
 		Directory:      s.Directory,
 		ParentID:       s.ParentID,
+		SplitParentID:  s.SplitParentID,
 		WorktreePath:   s.WorktreePath,
 		Branch:         s.Branch,
 		RobotModel:          s.RobotModel,
@@ -186,6 +188,7 @@ func (m *Manager) loadSessions() {
 		session.Position = info.Position
 		session.Metadata = info.Metadata
 		session.ParentID = info.ParentID
+		session.SplitParentID = info.SplitParentID
 		session.WorktreePath = info.WorktreePath
 		session.Branch = info.Branch
 		session.RobotModel = info.RobotModel

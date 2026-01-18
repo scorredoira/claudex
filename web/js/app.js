@@ -92,7 +92,7 @@ class Claudex {
             this.clientState = await response.json();
         } catch (err) {
             console.error('Failed to load client state:', err);
-            this.clientState = { theme: 'light', view3d: true };
+            this.clientState = { theme: 'light', view3d: false };
         }
     }
 
@@ -224,14 +224,14 @@ class Claudex {
             session.updated_at = new Date().toISOString();
         }
 
-        // Update modal if open
+        // Update session header if this session is active
         if (this.activeSessionId === sessionId) {
-            const modalBadge = document.getElementById('modal-status');
-            modalBadge.textContent = status.replace('_', ' ');
-            modalBadge.className = `status-badge ${status}`;
+            const statusBadge = document.getElementById('session-status');
+            statusBadge.textContent = status.replace('_', ' ');
+            statusBadge.className = `status-badge ${status}`;
 
             // Show/hide restart button
-            const restartBtn = document.getElementById('modal-restart');
+            const restartBtn = document.getElementById('session-restart');
             if (status === 'stopped') {
                 restartBtn.classList.remove('hidden');
             } else {
@@ -263,22 +263,27 @@ class Claudex {
             const response = await fetch('/api/sessions');
             let sessions = await response.json();
 
-            const grid = document.getElementById('sessions-grid');
-            grid.innerHTML = '';
+            const list = document.getElementById('sessions-list');
+            list.innerHTML = '';
 
             if (sessions.length === 0) {
-                grid.innerHTML = `
-                    <div class="empty-state">
-                        <h2>No sessions yet</h2>
-                        <p>Click "+ New Session" to create your first Claude Code session</p>
-                    </div>
-                `;
+                document.getElementById('empty-content').classList.remove('hidden');
                 return;
             }
 
+            document.getElementById('empty-content').classList.add('hidden');
+
+            // Add ALL sessions to the map (needed for split panes)
+            sessions.forEach(session => {
+                this.sessions.set(session.id, session);
+            });
+
+            // Filter out split child sessions for UI display only
+            const visibleSessions = sessions.filter(s => !s.split_parent_id);
+
             // Sort: parents first by date, then their experiments right after
-            const parents = sessions.filter(s => !s.parent_id).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-            const experiments = sessions.filter(s => s.parent_id);
+            const parents = visibleSessions.filter(s => !s.parent_id).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            const experiments = visibleSessions.filter(s => s.parent_id);
 
             const sorted = [];
             parents.forEach(parent => {
@@ -290,7 +295,6 @@ class Claudex {
             experiments.filter(e => !parents.find(p => p.id === e.parent_id)).forEach(exp => sorted.push(exp));
 
             sorted.forEach(session => {
-                this.sessions.set(session.id, session);
                 this.createCard(session);
             });
 
@@ -306,17 +310,20 @@ class Claudex {
 
             // Restore 3D view preference after sessions are loaded
             this.restore3DViewPreference();
+
+            // Auto-open first session or saved active session
+            if (sorted.length > 0 && !this.activeSessionId) {
+                const savedSession = this.clientState?.activeSession;
+                const sessionToOpen = savedSession && this.sessions.has(savedSession) ? savedSession : sorted[0].id;
+                this.openSession(sessionToOpen);
+            }
         } catch (err) {
             console.error('Failed to load sessions:', err);
         }
     }
 
     createCard(session) {
-        const grid = document.getElementById('sessions-grid');
-
-        // Remove empty state if exists
-        const emptyState = grid.querySelector('.empty-state');
-        if (emptyState) emptyState.remove();
+        const list = document.getElementById('sessions-list');
 
         const card = document.createElement('div');
         card.className = `session-card ${session.status || 'idle'}`;
@@ -327,8 +334,8 @@ class Claudex {
             card.classList.add('experiment');
         }
 
-        const gitBranchIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>`;
-        const closeIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>`;
+        const gitBranchIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>`;
+        const closeIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>`;
 
         card.innerHTML = `
             <div class="card-row">
@@ -340,11 +347,10 @@ class Claudex {
             </div>
             ${isExperiment ? `<span class="experiment-badge">↳ ${session.branch || 'experiment'}</span>` : ''}
             <span class="status-badge ${session.status || 'idle'}">${(session.status || 'idle').replace('_', ' ')}</span>
-            <span class="card-timestamp">${this.formatTimestamp(session.updated_at)}</span>
         `;
 
         card.onclick = (e) => {
-            if (!e.target.classList.contains('btn-delete') && !e.target.classList.contains('btn-experiment')) {
+            if (!e.target.closest('.btn-delete') && !e.target.closest('.btn-experiment')) {
                 this.openSession(session.id);
             }
         };
@@ -384,22 +390,22 @@ class Claudex {
             const draggedCard = document.querySelector(`[data-session-id="${draggedId}"]`);
             if (draggedCard && draggedCard !== card) {
                 const rect = card.getBoundingClientRect();
-                const midX = rect.left + rect.width / 2;
-                if (e.clientX < midX) {
-                    grid.insertBefore(draggedCard, card);
+                const midY = rect.top + rect.height / 2;
+                if (e.clientY < midY) {
+                    list.insertBefore(draggedCard, card);
                 } else {
-                    grid.insertBefore(draggedCard, card.nextSibling);
+                    list.insertBefore(draggedCard, card.nextSibling);
                 }
                 this.saveSessionOrder();
             }
         };
 
-        grid.appendChild(card);
+        list.appendChild(card);
     }
 
     saveSessionOrder() {
-        const grid = document.getElementById('sessions-grid');
-        const order = Array.from(grid.querySelectorAll('.session-card'))
+        const list = document.getElementById('sessions-list');
+        const order = Array.from(list.querySelectorAll('.session-card'))
             .map(card => card.dataset.sessionId);
         this.clientState.sessionOrder = order;
         this.saveClientState();
@@ -409,12 +415,12 @@ class Claudex {
         const order = this.clientState?.sessionOrder;
         if (!order || !order.length) return;
 
-        const grid = document.getElementById('sessions-grid');
+        const list = document.getElementById('sessions-list');
 
         order.forEach(id => {
-            const card = grid.querySelector(`[data-session-id="${id}"]`);
+            const card = list.querySelector(`[data-session-id="${id}"]`);
             if (card) {
-                grid.appendChild(card);
+                list.appendChild(card);
             }
         });
     }
@@ -542,22 +548,48 @@ class Claudex {
                 this.world3d.updateSessions(this.sessions);
             }
 
-            // Close modal if this session is open
+            // If this session was active, open another or show empty state
             if (this.activeSessionId === sessionId) {
-                this.closeModal();
+                this.closeCurrentSession();
+                this.activeSessionId = null;
+
+                // Open next available session
+                const nextSession = this.sessions.values().next().value;
+                if (nextSession) {
+                    this.openSession(nextSession.id);
+                } else {
+                    // No sessions left
+                    document.getElementById('session-header').classList.add('hidden');
+                    document.getElementById('empty-content').classList.remove('hidden');
+                }
             }
 
             // Show empty state if no sessions left
             if (this.sessions.size === 0) {
-                document.getElementById('sessions-grid').innerHTML = `
-                    <div class="empty-state">
-                        <h2>No sessions yet</h2>
-                        <p>Click "+ New Session" to create your first Claude Code session</p>
-                    </div>
-                `;
+                document.getElementById('empty-content').classList.remove('hidden');
             }
         } catch (err) {
             console.error('Failed to delete session:', err);
+        }
+    }
+
+    async closeAllSessions() {
+        const sessionIds = Array.from(this.sessions.keys());
+        for (const sessionId of sessionIds) {
+            try {
+                await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+            } catch (err) {
+                console.error('Failed to delete session:', sessionId, err);
+            }
+        }
+        this.sessions.clear();
+        document.getElementById('sessions-list').innerHTML = '';
+        this.closeCurrentSession();
+        this.activeSessionId = null;
+        document.getElementById('session-header').classList.add('hidden');
+        document.getElementById('empty-content').classList.remove('hidden');
+        if (this.world3d) {
+            this.world3d.updateSessions(this.sessions);
         }
     }
 
@@ -685,13 +717,30 @@ class Claudex {
         const session = this.sessions.get(sessionId);
         if (!session) return;
 
+        // Close previous session if different
+        if (this.activeSessionId && this.activeSessionId !== sessionId) {
+            this.closeCurrentSession();
+        }
+
         this.activeSessionId = sessionId;
         this.primarySessionId = sessionId;
         this.clientState.activeSession = sessionId;
         this.saveClientState();
 
-        // Update modal header
-        const titleInput = document.getElementById('modal-title');
+        // Update sidebar card selection
+        document.querySelectorAll('.session-card').forEach(card => {
+            card.classList.toggle('active', card.dataset.sessionId === sessionId);
+        });
+
+        // Show session header
+        const header = document.getElementById('session-header');
+        header.classList.remove('hidden');
+
+        // Hide empty content
+        document.getElementById('empty-content').classList.add('hidden');
+
+        // Update session header
+        const titleInput = document.getElementById('session-title');
         titleInput.value = session.name || sessionId;
         titleInput.onchange = () => this.updateSessionName(sessionId, titleInput.value);
         titleInput.onkeydown = (e) => {
@@ -702,12 +751,15 @@ class Claudex {
         titleInput.onkeyup = (e) => e.stopPropagation();
         titleInput.onblur = () => this.focusActivePane();
 
-        const modalBadge = document.getElementById('modal-status');
-        modalBadge.textContent = (session.status || 'idle').replace('_', ' ');
-        modalBadge.className = `status-badge ${session.status || 'idle'}`;
+        const statusBadge = document.getElementById('session-status');
+        statusBadge.textContent = (session.status || 'idle').replace('_', ' ');
+        statusBadge.className = `status-badge ${session.status || 'idle'}`;
 
-        const restartBtn = document.getElementById('modal-restart');
+        const restartBtn = document.getElementById('session-restart');
         restartBtn.classList.toggle('hidden', session.status !== 'stopped');
+
+        // Update experiment buttons
+        this.updateExperimentButtons(sessionId);
 
         // Clear panes
         this.panes.clear();
@@ -718,12 +770,9 @@ class Claudex {
         this.splitTree = null;
 
         // Setup panes container
-        const panesContainer = document.getElementById('modal-panes');
+        const panesContainer = document.getElementById('session-panes');
         panesContainer.innerHTML = '';
         panesContainer.className = '';
-
-        // Show modal FIRST so container has dimensions
-        document.getElementById('modal').classList.remove('hidden');
 
         // Check for saved split layout
         const savedLayout = this.loadSplitLayout(sessionId);
@@ -737,6 +786,33 @@ class Claudex {
         }
 
         this.scrollToBottomPending = true;
+    }
+
+    closeCurrentSession() {
+        // Unsubscribe from all pane sessions
+        const sessionIds = new Set();
+        this.panes.forEach(pane => {
+            sessionIds.add(pane.sessionId);
+        });
+        sessionIds.forEach(sessionId => {
+            this.ws.send(JSON.stringify({
+                type: 'unsubscribe',
+                session_id: sessionId
+            }));
+        });
+
+        // Cleanup all panes
+        this.panes.forEach(pane => {
+            if (pane.resizeObserver) pane.resizeObserver.disconnect();
+            pane.terminal.dispose();
+        });
+        this.panes.clear();
+        this.activePaneId = null;
+
+        // Cleanup all split instances
+        this.splitInstances.forEach(s => s.destroy());
+        this.splitInstances = [];
+        this.splitTree = null;
     }
 
     subscribeAndStartSession(sessionId, pane) {
@@ -874,7 +950,7 @@ class Claudex {
 
         // Only add to container if requested (for initial pane)
         if (addToContainer) {
-            const panesContainer = document.getElementById('modal-panes');
+            const panesContainer = document.getElementById('session-panes');
             panesContainer.appendChild(paneEl);
         }
 
@@ -967,8 +1043,8 @@ class Claudex {
 
     updateExperimentButtons(sessionId) {
         const session = this.sessions.get(sessionId);
-        const mergeBtn = document.getElementById('modal-exp-merge');
-        const discardBtn = document.getElementById('modal-exp-discard');
+        const mergeBtn = document.getElementById('session-exp-merge');
+        const discardBtn = document.getElementById('session-exp-discard');
 
         if (session && session.parent_id) {
             // This is an experiment, show buttons
@@ -1003,11 +1079,14 @@ class Claudex {
         pane.terminal.dispose();
         this.panes.delete(paneId);
 
-        // If no panes left, close modal and clear saved layout
+        // If no panes left, show empty state and clear saved layout
         if (this.panes.size === 0) {
             this.splitTree = null;
             this.clearSplitLayout(this.primarySessionId);
-            this.closeModal();
+            this.activeSessionId = null;
+            document.getElementById('session-header').classList.add('hidden');
+            document.getElementById('empty-content').classList.remove('hidden');
+            document.querySelectorAll('.session-card').forEach(card => card.classList.remove('active'));
             return;
         }
 
@@ -1192,7 +1271,7 @@ class Claudex {
 
     // Render the split tree to DOM
     renderSplitTree() {
-        const panesContainer = document.getElementById('modal-panes');
+        const panesContainer = document.getElementById('session-panes');
 
         // Destroy all existing split instances
         this.splitInstances.forEach(s => s.destroy());
@@ -1275,33 +1354,12 @@ class Claudex {
     }
 
     closeModal() {
-        // Unsubscribe from all pane sessions
-        const sessionIds = new Set();
-        this.panes.forEach(pane => {
-            sessionIds.add(pane.sessionId);
-        });
-        sessionIds.forEach(sessionId => {
-            this.ws.send(JSON.stringify({
-                type: 'unsubscribe',
-                session_id: sessionId
-            }));
-        });
-
-        // Cleanup all panes
-        this.panes.forEach(pane => {
-            if (pane.resizeObserver) pane.resizeObserver.disconnect();
-            pane.terminal.dispose();
-        });
-        this.panes.clear();
-        this.activePaneId = null;
-
-        // Cleanup all split instances
-        this.splitInstances.forEach(s => s.destroy());
-        this.splitInstances = [];
-        this.splitTree = null;
-
+        // Legacy function - now just clears the current session view
+        this.closeCurrentSession();
         this.activeSessionId = null;
-        document.getElementById('modal').classList.add('hidden');
+        document.getElementById('session-header').classList.add('hidden');
+        document.getElementById('empty-content').classList.remove('hidden');
+        document.querySelectorAll('.session-card').forEach(card => card.classList.remove('active'));
     }
 
     restartSession(sessionId = null) {
@@ -1376,6 +1434,14 @@ class Claudex {
             nameInput.select();
         };
 
+        // Close all sessions button
+        document.getElementById('close-all-sessions').onclick = () => {
+            if (this.sessions.size === 0) return;
+            this.showConfirm(`Close all ${this.sessions.size} sessions?`, () => {
+                this.closeAllSessions();
+            });
+        };
+
         // Cancel new session
         document.getElementById('cancel-new-session').onclick = () => {
             document.getElementById('new-session-dialog').classList.add('hidden');
@@ -1390,18 +1456,15 @@ class Claudex {
             document.getElementById('new-session-form').reset();
         };
 
-        // Close modal
-        document.getElementById('modal-close').onclick = () => this.closeModal();
-
         // Restart session
-        document.getElementById('modal-restart').onclick = () => this.restartSession();
+        document.getElementById('session-restart').onclick = () => this.restartSession();
 
         // Split panes
-        document.getElementById('modal-split-h').onclick = () => this.splitPane('horizontal');
-        document.getElementById('modal-split-v').onclick = () => this.splitPane('vertical');
+        document.getElementById('session-split-h').onclick = () => this.splitPane('horizontal');
+        document.getElementById('session-split-v').onclick = () => this.splitPane('vertical');
 
-        // Experiment from modal
-        document.getElementById('modal-experiment').onclick = () => {
+        // Experiment from session header
+        document.getElementById('session-experiment').onclick = () => {
             if (this.activePaneId) {
                 const pane = this.panes.get(this.activePaneId);
                 if (pane) {
@@ -1411,7 +1474,7 @@ class Claudex {
         };
 
         // Merge experiment
-        document.getElementById('modal-exp-merge').onclick = () => {
+        document.getElementById('session-exp-merge').onclick = () => {
             if (this.activePaneId) {
                 const pane = this.panes.get(this.activePaneId);
                 if (pane) {
@@ -1421,7 +1484,7 @@ class Claudex {
         };
 
         // Discard experiment
-        document.getElementById('modal-exp-discard').onclick = () => {
+        document.getElementById('session-exp-discard').onclick = () => {
             if (this.activePaneId) {
                 const pane = this.panes.get(this.activePaneId);
                 if (pane) {
@@ -1430,22 +1493,13 @@ class Claudex {
             }
         };
 
-        // Customize from modal
-        document.getElementById('modal-customize').onclick = () => {
-            if (this.activeSessionId && this.world3d) {
-                this.closeModal();
-                this.world3d.onCustomizeSession(this.activeSessionId);
-            }
-        };
-
-        // Delete from modal
-        document.getElementById('modal-delete').onclick = () => {
+        // Delete from session header
+        document.getElementById('session-delete').onclick = () => {
             if (this.activeSessionId) {
                 const session = this.sessions.get(this.activeSessionId);
                 const name = session?.name || this.activeSessionId;
                 this.showConfirm(`Delete "${name}"?`, () => {
                     this.deleteSession(this.activeSessionId);
-                    this.closeModal();
                 });
             }
         };
@@ -1485,7 +1539,6 @@ class Claudex {
         return [
             { category: 'General', shortcuts: [
                 { keys: `F1`, action: 'Show shortcuts help', id: 'showHelp' },
-                { keys: `Shift+Esc`, action: 'Close session modal', id: 'closeModal' },
                 { keys: `Esc`, action: 'Close dialogs', id: 'closeDialog' },
             ]},
             { category: 'Pane Navigation', shortcuts: [
@@ -1507,10 +1560,9 @@ class Claudex {
     setupKeyboardShortcuts() {
         document.addEventListener('keydown', (e) => {
             const dialog = document.getElementById('new-session-dialog');
-            const modal = document.getElementById('modal');
             const shortcutsModal = document.getElementById('shortcuts-modal');
-            const modalOpen = !modal.classList.contains('hidden');
             const shortcutsOpen = shortcutsModal && !shortcutsModal.classList.contains('hidden');
+            const hasActiveSession = this.activeSessionId !== null;
 
             // F1 - Show shortcuts help
             if (e.key === 'F1') {
@@ -1533,16 +1585,8 @@ class Claudex {
                 }
             }
 
-            // Shift+Escape closes session modal
-            if (e.key === 'Escape' && e.shiftKey) {
-                if (modalOpen) {
-                    e.preventDefault();
-                    this.closeModal();
-                }
-            }
-
-            // Pane navigation shortcuts (only when modal is open)
-            if (modalOpen && (e.metaKey || e.ctrlKey)) {
+            // Pane navigation shortcuts (only when a session is open)
+            if (hasActiveSession && (e.metaKey || e.ctrlKey)) {
                 // Cmd+1-9 - Switch to pane by number
                 const num = parseInt(e.key);
                 if (num >= 1 && num <= 9) {
@@ -1961,14 +2005,14 @@ class Claudex {
     toggle3DView() {
         this.is3DView = !this.is3DView;
 
-        const grid = document.getElementById('sessions-grid');
+        const mainLayout = document.getElementById('main-layout');
         const world3d = document.getElementById('world-3d');
         const viewToggle = document.getElementById('view-toggle');
         const viewIcon = viewToggle.querySelector('.view-icon');
 
         if (this.is3DView) {
             // Switch to 3D
-            grid.classList.add('hidden');
+            mainLayout.classList.add('hidden');
             world3d.classList.remove('hidden');
             viewIcon.textContent = '2D';
             viewToggle.classList.add('active');
@@ -1981,7 +2025,7 @@ class Claudex {
             this.world3d.updateSessions(this.sessions);
         } else {
             // Switch to 2D
-            grid.classList.remove('hidden');
+            mainLayout.classList.remove('hidden');
             world3d.classList.add('hidden');
             viewIcon.textContent = '3D';
             viewToggle.classList.remove('active');
@@ -1996,8 +2040,8 @@ class Claudex {
     }
 
     restore3DViewPreference() {
-        // Default to 3D view (true) unless explicitly set to false
-        if (this.clientState?.view3d !== false) {
+        // Default to 2D view unless explicitly set to true
+        if (this.clientState?.view3d === true) {
             this.toggle3DView();
         }
     }
