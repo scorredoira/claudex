@@ -512,6 +512,15 @@ func (h *Handler) HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If this is a split, get the current working directory from the parent session's process
+	if req.SplitParentID != "" {
+		if parentSess, ok := h.manager.Get(req.SplitParentID); ok {
+			if cwd, err := parentSess.GetProcessCwd(); err == nil && cwd != "" {
+				req.Directory = cwd
+			}
+		}
+	}
+
 	if req.Directory == "" {
 		// Default to home directory
 		req.Directory, _ = os.UserHomeDir()

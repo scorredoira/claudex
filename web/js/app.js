@@ -284,14 +284,6 @@ class Claudex {
         } else if (Notification.permission !== 'denied') {
             Notification.requestPermission();
         }
-
-        // Toast notification
-        const toast = document.createElement('div');
-        toast.className = 'toast attention';
-        toast.textContent = `${title}: ${message}`;
-        toast.onclick = () => toast.remove();
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 5000);
     }
 
     // Sessions management
