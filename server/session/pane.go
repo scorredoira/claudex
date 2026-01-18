@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"claudex/claude"
+
 	"github.com/creack/pty"
 )
 
@@ -338,7 +340,7 @@ func (p *Pane) readOutput() {
 	}
 }
 
-// monitorTimeouts watches for state timeouts
+// monitorTimeouts watches for state timeouts and polls Claude transcript
 func (p *Pane) monitorTimeouts() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -348,7 +350,58 @@ func (p *Pane) monitorTimeouts() {
 		case <-p.done:
 			return
 		case <-ticker.C:
+			p.pollClaudeTranscript()
 			p.checkTimeouts()
+		}
+	}
+}
+
+// pollClaudeTranscript reads Claude's transcript file for accurate state detection
+func (p *Pane) pollClaudeTranscript() {
+	p.mu.Lock()
+	claudeActive := p.tracker.claudeActive
+	directory := p.directory
+	oldStatus := p.status
+	p.mu.Unlock()
+
+	if !claudeActive {
+		return
+	}
+
+	// Get state from Claude's transcript file (source of truth)
+	state, err := claude.GetClaudeState(directory)
+	if err != nil {
+		return
+	}
+
+	var newStatus Status
+	switch state.Status {
+	case "thinking":
+		newStatus = StatusThinking
+	case "executing":
+		newStatus = StatusExecuting
+	case "waiting_input":
+		newStatus = StatusWaitingInput
+	case "idle":
+		// Claude session might have ended
+		newStatus = StatusWaitingInput
+	default:
+		return // Don't change if unknown
+	}
+
+	if newStatus != oldStatus {
+		p.mu.Lock()
+		p.status = newStatus
+		p.tracker.stateChangedAt = time.Now()
+		p.tracker.confidence = 0.95 // High confidence from transcript
+		onStatus := p.onStatus
+		p.mu.Unlock()
+
+		log.Printf("[Pane %s] Transcript state: %s -> %s (tool: %s)",
+			p.ID, oldStatus, newStatus, state.CurrentTool)
+
+		if onStatus != nil {
+			go onStatus(newStatus)
 		}
 	}
 }
@@ -547,6 +600,9 @@ func (p *Pane) getRecentLines(n int) []LineEntry {
 // analyzeContext looks at the full line buffer for patterns
 func (p *Pane) analyzeContext() (Status, float64) {
 	if len(p.tracker.lines) == 0 {
+		if p.tracker.claudeActive {
+			return StatusWaitingInput, 0.5
+		}
 		return StatusShell, 0.3
 	}
 
@@ -570,8 +626,6 @@ func (p *Pane) analyzeContext() (Status, float64) {
 		}
 	}
 
-	totalLines := len(p.tracker.lines)
-
 	if spinnerCount > 0 {
 		p.tracker.claudeActive = true
 		return StatusThinking, 0.85
@@ -582,6 +636,20 @@ func (p *Pane) analyzeContext() (Status, float64) {
 		return StatusExecuting, 0.80
 	}
 
+	// CRITICAL: If Claude is active, NEVER go back to shell state
+	// Shell prompts inside Claude output (from Bash tool execution) are false positives
+	if p.tracker.claudeActive {
+		if claudeUICount > 0 {
+			lastLine := p.tracker.lines[len(p.tracker.lines)-1]
+			if looksLikeClaudePrompt(lastLine.Content) {
+				return StatusWaitingInput, 0.85
+			}
+		}
+		// Stay in waiting_input while Claude is active
+		return StatusWaitingInput, 0.70
+	}
+
+	// Only reach here if claudeActive is false
 	if claudeUICount > 0 && lastClaudeUI > lastShellPrompt {
 		p.tracker.claudeActive = true
 		lastLine := p.tracker.lines[len(p.tracker.lines)-1]
@@ -592,17 +660,9 @@ func (p *Pane) analyzeContext() (Status, float64) {
 	}
 
 	if shellPromptCount > 0 && lastShellPrompt > lastClaudeUI {
-		if claudeUICount > totalLines/4 {
-			p.tracker.claudeActive = true
-			return StatusWaitingInput, 0.55
-		}
-		p.tracker.claudeActive = false
 		return StatusShell, 0.80
 	}
 
-	if p.tracker.claudeActive {
-		return StatusWaitingInput, 0.50
-	}
 	return StatusShell, 0.50
 }
 
@@ -745,6 +805,22 @@ func looksLikeClaudePrompt(line string) bool {
 	}
 	if containsString(line, "> ") && containsString(line, "│") {
 		return true
+	}
+	return false
+}
+
+// detectClaudeExit checks if Claude session has ended
+func detectClaudeExit(line string) bool {
+	exitPatterns := []string{
+		"Session ended",
+		"Goodbye!",
+		"exited with code",
+		"Session terminated",
+	}
+	for _, pattern := range exitPatterns {
+		if containsString(line, pattern) {
+			return true
+		}
 	}
 	return false
 }

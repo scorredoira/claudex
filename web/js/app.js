@@ -19,6 +19,9 @@ class Claudex {
         this.splitTree = null;
         this.primarySessionId = null; // The session that was originally opened (for saving layout)
 
+        // Sidebar split
+        this.sidebarSplit = null;
+
         this.init();
     }
 
@@ -27,7 +30,41 @@ class Claudex {
         await this.checkWorktree();
         this.connectWebSocket();
         this.setupEventListeners();
+        this.initSidebarSplit();
         await this.loadSessions();
+    }
+
+    initSidebarSplit() {
+        const sidebar = document.getElementById('sessions-sidebar');
+        const content = document.getElementById('session-content');
+
+        if (!sidebar || !content) return;
+
+        // Get saved sidebar width percentage (default 15%)
+        const savedWidth = this.clientState?.sidebarWidth || 15;
+
+        this.sidebarSplit = Split(['#sessions-sidebar', '#session-content'], {
+            sizes: [savedWidth, 100 - savedWidth],
+            minSize: [120, 200],
+            gutterSize: 4,
+            cursor: 'col-resize',
+            gutter: (index, direction) => {
+                const gutter = document.createElement('div');
+                gutter.className = `gutter gutter-${direction} sidebar-gutter`;
+                return gutter;
+            },
+            onDragEnd: (sizes) => {
+                // Save the new sidebar width
+                this.clientState.sidebarWidth = sizes[0];
+                this.saveClientState();
+
+                // Refit all terminals after resize
+                this.panes.forEach(pane => {
+                    pane.fitAddon.fit();
+                    this.sendResize(pane.sessionId, pane.terminal.rows, pane.terminal.cols);
+                });
+            }
+        });
     }
 
     // Check if we're in a git worktree
@@ -340,7 +377,7 @@ class Claudex {
         card.innerHTML = `
             <div class="card-row">
                 <span class="card-title">${session.name || session.id}</span>
-                <div>
+                <div class="card-actions">
                     ${!isExperiment ? `<button class="btn-experiment" title="New experiment">${gitBranchIcon}</button>` : ''}
                     <button class="btn-delete" title="Delete session">${closeIcon}</button>
                 </div>
@@ -472,9 +509,8 @@ class Claudex {
                 this.world3d.updateSessions(this.sessions);
             }
 
-            // If modal is open, open experiment in a split pane
-            const modal = document.getElementById('modal');
-            if (!modal.classList.contains('hidden') && this.activePaneId) {
+            // If there's an active pane, open experiment in a split
+            if (this.activePaneId && this.panes.size > 0) {
                 await this.openExperimentInSplit(session);
             } else {
                 // Open the new experiment session
